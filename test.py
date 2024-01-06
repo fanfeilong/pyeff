@@ -26,6 +26,7 @@ if __name__=="__main__":
     assert not os.path.exists("./build/data_1_copytree_include/test.md")
     assert os.path.exists("./build/data_1_copytree_include/test.txt")
     
+    # test remove
     remove("./build/data_1_copytree_to_be_remove")
     assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
     

@@ -23,15 +23,23 @@ src/copytree.py
 用例：
 
 ```python
-copytree("./test/data_1","./build/data_1_copytree_includes", 
+# test copytree ignore
+copytree("./test/data_1","./build/data_1_copytree_ignore", 
             mode='ignore', 
             patterns=['*.txt'], 
             dirs_exist_ok=True)
-    
-copytree("./test/data_1","./build/data_1_copytree_ignores", 
+assert os.path.exists("./build/data_1_copytree_ignore")
+assert os.path.exists("./build/data_1_copytree_ignore/test.md")
+assert not os.path.exists("./build/data_1_copytree_ignore/test.txt")
+
+# test copytree include
+copytree("./test/data_1","./build/data_1_copytree_include", 
             mode='include', 
             patterns=['*.txt'], 
             dirs_exist_ok=True)
+assert os.path.exists("./build/data_1_copytree_include")
+assert not os.path.exists("./build/data_1_copytree_include/test.md")
+assert os.path.exists("./build/data_1_copytree_include/test.txt")
 ```
 
 
@@ -52,6 +60,7 @@ src/remove.py
 
 用例：
 ```python
+# test remove
 remove('./build')
 assert not os.path.exists('./build')
 
