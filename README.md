@@ -23,6 +23,13 @@ src/copytree.py
 用例：
 
 ```python
-copytree("./test/data_1","./build/data_1_copytree_includes", mode='ignore', patterns=['*.txt'], dirs_exist_ok=True)
-copytree("./test/data_1","./build/data_1_copytree_ignores", mode='include', patterns=['*.txt'], dirs_exist_ok=True)
+copytree("./test/data_1","./build/data_1_copytree_includes", 
+            mode='ignore', 
+            patterns=['*.txt'], 
+            dirs_exist_ok=True)
+    
+copytree("./test/data_1","./build/data_1_copytree_ignores", 
+            mode='include', 
+            patterns=['*.txt'], 
+            dirs_exist_ok=True)
 ```
