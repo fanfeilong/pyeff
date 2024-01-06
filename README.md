@@ -33,3 +33,34 @@ copytree("./test/data_1","./build/data_1_copytree_ignores",
             patterns=['*.txt'], 
             dirs_exist_ok=True)
 ```
+
+
+## remove
+需求分析：
+* Python 删除文件有 os.remove, shutil.rmtree, 以及 os.system("rm -f /a/d"), os.systme("rm -rf /a/d") 等各种方式
+* 大部分时候，删除文件和文件夹，有一个简单统一的 remove 方法就可以了
+
+解决方案：
+* 实现一个自动根据文件，文件夹使用 os.remove 和shutil.rmtree的remove方法
+* 做一些必要的系统路径安全检查，避免误删
+
+源代码：
+src/remove.py
+
+函数原型：
+* `remove(path)`
+
+用例：
+```python
+remove('./build')
+assert not os.path.exists('./build')
+
+remove("./build/data_1_copytree_to_be_remove")
+assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
+
+copytree("./test/data_1","./build/data_1_copytree_to_be_remove", 
+            dirs_exist_ok=False)
+remove("./build/data_1_copytree_to_be_remove/test.md")
+assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
+assert os.path.exists("./build/data_1_copytree_to_be_remove/test.txt")
+```

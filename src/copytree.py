@@ -3,20 +3,6 @@ import shutil
 import subprocess
 import fnmatch
 
-def remove(path):
-    if not os.path.exists(path):
-        return
-
-    if os.path.abspath(path) in ["/", os.path.expanduser("~")]:
-        print(
-            "error: You are trying to delete your root or home directory.")
-        return
-
-    if os.path.isfile(path):
-        os.remove(path)
-    elif os.path.isdir(path):
-        shutil.rmtree(path)
-
 def copytree_by_shutils_ignores(src, dst, *patterns):
     def ignore_patterns(*patterns):
         def _ignore_patterns(path, names):
@@ -48,7 +34,7 @@ def copytree_by_shutils_includes(src,dst,*patterns):
     # 现在使用 shutil.copytree 并传递这个自定义的忽略函数
     shutil.copytree(src, dst, ignore=include_patterns(*patterns))
     
-def copytree_by_os_walk_ignores(src, dst, *patterns):
+def copytree_by_os_walk_includes(src, dst, *patterns):
     # 确保目标目录存在
     os.makedirs(dst, exist_ok=True)
     
@@ -71,7 +57,7 @@ def copytree_by_os_walk_ignores(src, dst, *patterns):
             dest_file_path = os.path.join(dest_dir, file)
             shutil.copy2(src_file_path, dest_file_path)  # 使用 copy2 以保留元数据
 
-def copytree_by_os_walk_includes(src, dst, *patterns):
+def copytree_by_os_walk_ignores(src, dst, *patterns):
     # 确保目标目录存在
     os.makedirs(dst, exist_ok=True)
     
@@ -97,20 +83,24 @@ def copytree_by_os_walk_includes(src, dst, *patterns):
 
 def copytree_ignores(src, dst, patterns=None, dirs_exist_ok=False):
     if dirs_exist_ok:
-        copytree_by_os_walk_ignores(src,dst, *patterns)
+        copytree_by_os_walk_ignores(src, dst, *patterns)
     else:
-        copytree_by_shutils_ignores(src,dst,*patterns)                
+        copytree_by_shutils_ignores(src, dst, *patterns)                
 
 def copytree_includes(src, dst, patterns=None,  dirs_exist_ok=False):
     if dirs_exist_ok:
-        copytree_by_os_walk_includes(src,dst, *patterns)
+        copytree_by_os_walk_includes(src, dst, *patterns)
     else:
-        copytree_by_shutils_includes(src,dst,*patterns)
+        copytree_by_shutils_includes(src, dst, *patterns)
 
 
-def copytree(src, dst, mode='ignore', patterns=None, dirs_exist_ok=False):
-    assert mode in ['ignore', 'include']
+def copytree(src, dst, mode='all', patterns=None, dirs_exist_ok=False):
+    
+    assert mode in ['ignore', 'include', 'all']
+    
     if mode =='ignore':
-        copytree_ignores(src,dst,patterns=patterns,dirs_exist_ok=dirs_exist_ok)
+        copytree_ignores(src, dst, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
+    elif mode=='include':
+        copytree_includes(src, dst, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
     else:
-        copytree_includes(src,dst,patterns=patterns,dirs_exist_ok=dirs_exist_ok)
+        copytree_ignores(src, dst, patterns=[], dirs_exist_ok=dirs_exist_ok)
