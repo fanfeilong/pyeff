@@ -17,8 +17,8 @@ advanced python filesystem
 src/copytree.py
 
 函数原型：
-* `copytree(src, dst, mode='ignore', patterns=None, dirs_exist_ok=False)`
-* 可选的 mode 有 `'ignore'`, `'include'`
+* `copytree(src, dst, mode='all', patterns=[], dirs_exist_ok=False)`
+* 可选的 mode 有 `'ignore'`, `'include'`, `'all'`，默认值 `'all'`
 
 用例：
 
