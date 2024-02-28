@@ -1,15 +1,15 @@
-from src.copytree import copytree
-from src.remove import remove
+from src.pyfs_copy import copy
+from src.pyfs_remove import remove
 
 import os
 
-if __name__=="__main__":
+def test_copy_remove():
     # clear
     remove('./build')
     assert not os.path.exists('./build')
     
     # test copytree ignore
-    copytree("./test/data_1","./build/data_1_copytree_ignore", 
+    copy("./test/data_1","./build/data_1_copytree_ignore", 
              mode='ignore', 
              patterns=['*.txt'], 
              dirs_exist_ok=True)
@@ -18,7 +18,7 @@ if __name__=="__main__":
     assert not os.path.exists("./build/data_1_copytree_ignore/test.txt")
     
     # test copytree include
-    copytree("./test/data_1","./build/data_1_copytree_include", 
+    copy("./test/data_1","./build/data_1_copytree_include", 
              mode='include', 
              patterns=['*.txt'], 
              dirs_exist_ok=True)
@@ -30,9 +30,11 @@ if __name__=="__main__":
     remove("./build/data_1_copytree_to_be_remove")
     assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
     
-    copytree("./test/data_1","./build/data_1_copytree_to_be_remove", 
+    copy("./test/data_1","./build/data_1_copytree_to_be_remove", 
              dirs_exist_ok=False)
     remove("./build/data_1_copytree_to_be_remove/test.md")
     assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
     assert os.path.exists("./build/data_1_copytree_to_be_remove/test.txt")
     
+if __name__=="__main__":
+    test_copy_remove()

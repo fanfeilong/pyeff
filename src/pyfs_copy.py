@@ -1,6 +1,5 @@
 import os
 import shutil
-import subprocess
 import fnmatch
 
 def copytree_by_shutils_ignores(src, dst, *patterns):
@@ -93,7 +92,6 @@ def copytree_includes(src, dst, patterns=None,  dirs_exist_ok=False):
     else:
         copytree_by_shutils_includes(src, dst, *patterns)
 
-
 def copytree(src, dst, mode='all', patterns=None, dirs_exist_ok=False):
     
     assert mode in ['ignore', 'include', 'all']
@@ -104,3 +102,12 @@ def copytree(src, dst, mode='all', patterns=None, dirs_exist_ok=False):
         copytree_includes(src, dst, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
     else:
         copytree_ignores(src, dst, patterns=[], dirs_exist_ok=dirs_exist_ok)
+
+def copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False):
+    if os.path.isfile(src):
+        if copy_metadata:
+            shutil.copy(src,dst, follow_symlinks = follow_symlinks)
+        else:
+            shutil.copy2(src,dst, follow_symlinks = follow_symlinks)
+    else:
+        copytree(src, dst, mode=mode, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
