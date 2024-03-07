@@ -15,7 +15,7 @@ advanced python filesystem
 * 自动根据src是文件还是文件夹选择内部的不同实现
 
 源代码：
-src/copytree.py
+src/pyfs_copy.py
 
 函数原型：
 * `copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False)`
@@ -54,7 +54,7 @@ assert os.path.exists("./build/data_1_copytree_include/test.txt")
 * 支持对删除目录树的过滤，匹配的文件，或者不匹配的文件
 
 源代码：
-src/remove.py
+src/pyfs_remove.py
 
 函数原型：
 * `remove(path, mode='all', patterns=[])`
