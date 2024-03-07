@@ -1,7 +1,8 @@
 # pyfs
+
 advanced python filesystem
 
-## copytree
+## copy
 
 需求分析：
 * Python 拷贝文件夹有 shutil.copytree, os.walk, 以及 os.listdir 递归遍历文件夹三种基本的方式
