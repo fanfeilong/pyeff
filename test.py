@@ -36,5 +36,20 @@ def test_copy_remove():
     assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
     assert os.path.exists("./build/data_1_copytree_to_be_remove/test.txt")
     
+    # test remove with incldue mode
+    copy("./test/data_1","./build/data_1_copytree_to_be_remove_2", 
+             dirs_exist_ok=False)
+    remove("./build/data_1_copytree_to_be_remove_2", 
+           mode="include", 
+           patterns=['*.md'])
+    assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.md")
+    assert os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
+    
+    # test remove with ignore mode
+    remove("./build/data_1_copytree_to_be_remove_2", 
+           mode="ignore",
+           patterns=['*.md'])
+    assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
+    
 if __name__=="__main__":
     test_copy_remove()
