@@ -38,7 +38,7 @@ assert not os.path.exists('./build')
 remove("./build/data_1_copytree_to_be_remove")
 assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
 
-copytree("./test/data_1","./build/data_1_copytree_to_be_remove", 
+copy("./test/data_1","./build/data_1_copytree_to_be_remove", 
             dirs_exist_ok=False)
 remove("./build/data_1_copytree_to_be_remove/test.md")
 assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
