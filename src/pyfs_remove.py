@@ -41,7 +41,7 @@ def _save_remove(path):
     elif os.path.isdir(path):
         shutil.rmtree(path)
 
-def removetree(src, mode='all', patterns=None):
+def remove(src, mode='all', patterns=None):
     
     assert mode in ['ignore', 'include', 'all']
     
@@ -51,8 +51,3 @@ def removetree(src, mode='all', patterns=None):
         _removetree_by_os_walk_includes(src, *patterns)
     else:
         _save_remove(src)
-
-def remove(path, mode='all', patterns=None):
-    assert mode in ['ignore', 'include', 'all']
-    
-    removetree(path, mode, patterns)

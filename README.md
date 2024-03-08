@@ -97,3 +97,78 @@ remove("./build/data_1_copytree_to_be_remove_2",
         patterns=['*.md'])
 assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
 ```
+
+
+## move
+需求分析：
+* Python 移动有 `os.rename`, `shutil.move` 等方式
+* 我们希望move和copy，remove一样支持过滤操作，而不只是一个文件夹全move
+
+解决方案：
+* 实现一个通用的 move
+* 做一些必要的系统路径安全检查，避免误移动
+* 支持对目录树的过滤，匹配的文件，或者不匹配的文件
+
+源代码：
+src/pyfs_move.py
+
+函数原型：
+* `move(src, dst, mode='all', patterns=None)`
+* 可选的 mode 有 `'ignore'`, `'include'`, `'all'`，默认值 `'all'`
+
+用例1：
+```python
+move("./build/data_1_move_source_0/sub_1/test.md","./build/data_1_move/sub_1/test.md")
+assert os.path.exists('./build/data_1_move/sub_1/test.md')
+assert not os.path.exists('./build/data_1_move_source_0/sub_1/test.md')
+
+move("./build/data_1_move_source_0/sub_2","./build/data_1_move/sub_2")
+assert os.path.exists('./build/data_1_move/sub_2')
+assert os.path.exists('./build/data_1_move/sub_2/test.txt')
+assert os.path.exists('./build/data_1_move/sub_2/test.md')
+
+assert not os.path.exists('./build/data_1_move_source_0/sub_2')
+assert not os.path.exists('./build/data_1_move_source_0/sub_2/test.txt')
+assert not os.path.exists('./build/data_1_move_source_0/sub_2/test.md')
+```
+
+用例2
+```python
+# test move tree ignore
+move("./build/data_1_move_source_1","./build/data_1_move_ignore", 
+        mode='ignore', 
+        patterns=['*.txt'])
+assert os.path.exists("./build/data_1_move_ignore")
+
+assert os.path.exists("./build/data_1_move_ignore/test.md")
+assert not os.path.exists("./build/data_1_move_source_1/test.md")
+
+assert not os.path.exists("./build/data_1_move_ignore/test.txt")
+assert os.path.exists("./build/data_1_move_source_1/test.txt")
+
+assert os.path.exists("./build/data_1_move_ignore/sub_1/test.md")
+assert not os.path.exists("./build/data_1_move_source_1/sub_1/test.md")
+
+assert not os.path.exists("./build/data_1_move_ignore/sub_1/test.txt")
+assert os.path.exists("./build/data_1_move_source_1/sub_1/test.txt")
+```
+
+用例3
+```python
+# test move tree include
+move("./build/data_1_move_source_2","./build/data_1_move_include", 
+        mode='include', 
+        patterns=['*.txt'])
+
+assert os.path.exists("./build/data_1_move_include/test.txt")
+assert not os.path.exists("./build/data_1_move_source_2/test.txt")
+
+assert not os.path.exists("./build/data_1_move_include/test.md")
+assert os.path.exists("./build/data_1_move_source_2/test.md")
+
+assert os.path.exists("./build/data_1_move_include/sub_1/test.txt")
+assert not os.path.exists("./build/data_1_move_source_2/sub_1/test.txt")
+
+assert not os.path.exists("./build/data_1_move_include/sub_1/test.md")
+assert os.path.exists("./build/data_1_move_source_2/sub_1/test.md")
+```
