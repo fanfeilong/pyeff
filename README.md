@@ -2,47 +2,9 @@
 
 advanced python filesystem
 
-## copy
-
-需求分析：
-* Python 拷贝文件夹有 shutil.copytree, os.walk, 以及 os.listdir 递归遍历文件夹三种基本的方式
-* 上述3个都或多或少有一些缺点
-  * shutil.copytree 支持过滤，但是写起来费劲，此外必须目标文件夹不存在
-  * os.walk 需要反复写重复代码
-  * os.listdir 递归也需要反复拼接路径
-
-解决方案：
-* 实现一个通用的 copy，支持指定忽略或者过滤模式的文件通配符，支持指定是否允许目标文件夹存在
-* 自动根据src是文件还是文件夹选择内部的不同实现
-
-源代码：
-src/pyfs_copy.py
-
-函数原型：
-* `copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False)`
-* 可选的 mode 有 `'ignore'`, `'include'`, `'all'`，默认值 `'all'`
-
-用例：
-
-```python
-# test copytree ignore
-copy("./test/data_1","./build/data_1_copytree_ignore", 
-            mode='ignore', 
-            patterns=['*.txt'], 
-            dirs_exist_ok=True)
-assert os.path.exists("./build/data_1_copytree_ignore")
-assert os.path.exists("./build/data_1_copytree_ignore/test.md")
-assert not os.path.exists("./build/data_1_copytree_ignore/test.txt")
-
-# test copytree include
-copy("./test/data_1","./build/data_1_copytree_include", 
-            mode='include', 
-            patterns=['*.txt'], 
-            dirs_exist_ok=True)
-assert os.path.exists("./build/data_1_copytree_include")
-assert not os.path.exists("./build/data_1_copytree_include/test.md")
-assert os.path.exists("./build/data_1_copytree_include/test.txt")
-```
+## 支持的函数列表
+* 文件/文件夹 API，提供一致的参数，一致的对文件/文件夹同时支持的能力，一致的过滤能力：
+  * `remove`, `copy`, `move`
 
 ## remove
 需求分析：
@@ -96,6 +58,48 @@ remove("./build/data_1_copytree_to_be_remove_2",
         mode="ignore",
         patterns=['*.md'])
 assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
+```
+
+## copy
+
+需求分析：
+* Python 拷贝文件夹有 shutil.copytree, os.walk, 以及 os.listdir 递归遍历文件夹三种基本的方式
+* 上述3个都或多或少有一些缺点
+  * shutil.copytree 支持过滤，但是写起来费劲，此外必须目标文件夹不存在
+  * os.walk 需要反复写重复代码
+  * os.listdir 递归也需要反复拼接路径
+
+解决方案：
+* 实现一个通用的 copy，支持指定忽略或者过滤模式的文件通配符，支持指定是否允许目标文件夹存在
+* 自动根据src是文件还是文件夹选择内部的不同实现
+
+源代码：
+src/pyfs_copy.py
+
+函数原型：
+* `copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False)`
+* 可选的 mode 有 `'ignore'`, `'include'`, `'all'`，默认值 `'all'`
+
+用例：
+
+```python
+# test copytree ignore
+copy("./test/data_1","./build/data_1_copytree_ignore", 
+            mode='ignore', 
+            patterns=['*.txt'], 
+            dirs_exist_ok=True)
+assert os.path.exists("./build/data_1_copytree_ignore")
+assert os.path.exists("./build/data_1_copytree_ignore/test.md")
+assert not os.path.exists("./build/data_1_copytree_ignore/test.txt")
+
+# test copytree include
+copy("./test/data_1","./build/data_1_copytree_include", 
+            mode='include', 
+            patterns=['*.txt'], 
+            dirs_exist_ok=True)
+assert os.path.exists("./build/data_1_copytree_include")
+assert not os.path.exists("./build/data_1_copytree_include/test.md")
+assert os.path.exists("./build/data_1_copytree_include/test.txt")
 ```
 
 
