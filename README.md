@@ -2,6 +2,16 @@
 
 advanced python filesystem
 
+## 安装测试
+
+```bash
+pip3 install -r requirements.txt
+```
+
+```bash
+python3 test.py
+```
+
 ## 支持的函数列表
 
 * 文件/文件夹 API，提供一致的参数，一致的对文件/文件夹同时支持的能力，一致的过滤能力：

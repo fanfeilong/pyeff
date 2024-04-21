@@ -1,0 +1,5 @@
+loguru
+requests
+pyyaml >= 5.1
+pyyaml-include>=2.0
+aiofiles
