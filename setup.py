@@ -7,14 +7,14 @@ this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
 setup(
-    name="pyfs",
+    name="pysmall",
     version="0.1.0",
-    description="Enhanced Python FileSystem",
+    description="Small Python lib, User friendly API for daily python code.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Fan Fei Long",
     author_email="fanfeilong@gmail.com",
-    url="https://github.com/fanfeilong/pyfs",
+    url="https://github.com/fanfeilong/pysmall.git",
     license="MIT",
     classifiers=[
         "Topic :: Utilities",
