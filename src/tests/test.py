@@ -1,16 +1,16 @@
 import os
 
-from pysmall.fs import copy, remove, move
-from pysmall.yaml import load_yaml_full, load_yaml_safe, dump_yaml
-from pysmall.json import load_json, dump_json
-from pysmall.logger import (
+from pyeff.fs import copy, remove, move
+from pyeff.yaml import load_yaml_full, load_yaml_safe, dump_yaml
+from pyeff.json import load_json, dump_json
+from pyeff.logger import (
     logger_file_info,
     logger_section,
     logger_table_begin,
     logger_table_end,
 )
-from pysmall.fs import current_dir
-from pysmall.shell import run_cmds
+from pyeff.fs import current_dir
+from pyeff.shell import run_cmds
 
 
 def test_clear():
