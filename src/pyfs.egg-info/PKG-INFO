@@ -226,13 +226,13 @@ from pyfs.shell import run_cmds
 
 run_cmds(
     [
-        "cd data_1",
+        "cd data_1", 
         "cat test.txt"
     ],
-    cwd=current_dir(),
+    cwd=current_dir(__file__),
     tip="test",
     check=True,
-    join=True
+    join=True,
 )
 
 ```
