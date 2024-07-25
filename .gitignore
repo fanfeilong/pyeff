@@ -1,4 +1,4 @@
 build/
 __pycache__
 dist/
-src/pyfs.egg-info/PKG-INFO
+src/pysmall.egg-info/
