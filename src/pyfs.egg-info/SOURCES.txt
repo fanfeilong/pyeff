@@ -1,0 +1,16 @@
+LICENSE
+README.md
+setup.py
+src/pyfs/__init__.py
+src/pyfs/filesystem.py
+src/pyfs/indent.py
+src/pyfs/json.py
+src/pyfs/lines.py
+src/pyfs/logger.py
+src/pyfs/shell.py
+src/pyfs/yaml.py
+src/pyfs.egg-info/PKG-INFO
+src/pyfs.egg-info/SOURCES.txt
+src/pyfs.egg-info/dependency_links.txt
+src/pyfs.egg-info/top_level.txt
+src/tests/test.py
