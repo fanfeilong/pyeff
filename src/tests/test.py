@@ -1,16 +1,16 @@
 import os
 
-from pyfs.filesystem import copy, remove, move
-from pyfs.yaml import load_yaml_full, load_yaml_safe, dump_yaml
-from pyfs.json import load_json, dump_json
-from pyfs.logger import (
+from pysmall.fs import copy, remove, move
+from pysmall.yaml import load_yaml_full, load_yaml_safe, dump_yaml
+from pysmall.json import load_json, dump_json
+from pysmall.logger import (
     logger_file_info,
     logger_section,
     logger_table_begin,
     logger_table_end,
 )
-from pyfs.filesystem import current_dir
-from pyfs.shell import run_cmds
+from pysmall.fs import current_dir
+from pysmall.shell import run_cmds
 
 
 def test_clear():
