@@ -276,3 +276,7 @@ def remove(src, mode="all", patterns=None):
         _removetree_by_os_walk_includes(src, *patterns)
     else:
         _save_remove(src)
+
+
+def current_dir(file):
+    return os.path.dirname(os.path.abspath(file))

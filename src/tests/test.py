@@ -9,6 +9,8 @@ from pyfs.logger import (
     logger_table_begin,
     logger_table_end,
 )
+from pyfs.filesystem import current_dir
+from pyfs.shell import run_cmds
 
 
 def test_clear():
@@ -177,6 +179,16 @@ def test_logger():
     logger_table_end()
 
 
+def test_shell():
+    run_cmds(
+        ["cd data_1", "cat test.txt"],
+        cwd=current_dir(__file__),
+        tip="test",
+        check=True,
+        join=True,
+    )
+
+
 if __name__ == "__main__":
     test_clear()
     test_copy_remove()
@@ -184,3 +196,4 @@ if __name__ == "__main__":
     test_yaml()
     test_json()
     test_logger()
+    test_shell()
