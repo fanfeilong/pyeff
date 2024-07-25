@@ -1,2 +1,0 @@
-pyfs
-tests

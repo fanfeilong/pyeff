@@ -1,16 +1,16 @@
-# pyfs
+# pysmall
 
-advanced python filesystem
+a small python library, which include user friendly api, includes fs, json, yaml, logger, and so on.
 
 ## Install
 
 ```bash
-pip install pyfs
+pip install pysmall
 ```
 
-## module: pyfs.filesystem
+## module: pysmall.fs
 
-### API: pyfs.filesystem.remove
+### API: pysmall.fs.remove
 
 * `remove(path, mode='all', patterns=[])`
 * option mode  `'ignore'`, `'include'`, `'all'`, default is `'all'`
@@ -18,7 +18,7 @@ pip install pyfs
 example-1：
 
 ```python
-from pyfs.filesystem import remove, copy
+from pysmall.fs import remove, copy
 
 # test remove
 remove('./build')
@@ -37,7 +37,7 @@ assert os.path.exists("./build/data_1_copytree_to_be_remove/test.txt")
 example-2
 
 ```python
-from pyfs.filesystem import remove, copy
+from pysmall.fs import remove, copy
 
 # test remove with incldue mode
 copy("./test/data_1","./build/data_1_copytree_to_be_remove_2", 
@@ -52,7 +52,7 @@ assert os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
 example-3
 
 ```python
-from pyfs.filesystem import remove, copy
+from pysmall.fs import remove, copy
 
 # test remove with ignore mode
 remove("./build/data_1_copytree_to_be_remove_2", 
@@ -61,7 +61,7 @@ remove("./build/data_1_copytree_to_be_remove_2",
 assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
 ```
 
-### API: pyfs.filesystem.copy
+### API: pysmall.fs.copy
 
 * `copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False)`
 * option mode `'ignore'`, `'include'`, `'all'`, default is `'all'`
@@ -69,7 +69,7 @@ assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
 example:
 
 ```python
-from pyfs.filesystem import remove, copy
+from pysmall.fs import remove, copy
 
 # test copytree ignore
 copy("./test/data_1","./build/data_1_copytree_ignore", 
@@ -90,7 +90,7 @@ assert not os.path.exists("./build/data_1_copytree_include/test.md")
 assert os.path.exists("./build/data_1_copytree_include/test.txt")
 ```
 
-### API: pyfs.filesystem.move
+### API: pysmall.fs.move
 
 * `move(src, dst, mode='all', patterns=None)`
 * option modes `'ignore'`, `'include'`, `'all'`, default is `'all'`
@@ -98,7 +98,7 @@ assert os.path.exists("./build/data_1_copytree_include/test.txt")
 example-1:
 
 ```python
-from pyfs.filesystem import move
+from pysmall.fs import move
 
 move("./build/data_1_move_source_0/sub_1/test.md","./build/data_1_move/sub_1/test.md")
 assert os.path.exists('./build/data_1_move/sub_1/test.md')
@@ -117,7 +117,7 @@ assert not os.path.exists('./build/data_1_move_source_0/sub_2/test.md')
 example-2
 
 ```python
-from pyfs.filesystem import move
+from pysmall.fs import move
 
 # test move tree ignore
 move("./build/data_1_move_source_1","./build/data_1_move_ignore", 
@@ -141,7 +141,7 @@ assert os.path.exists("./build/data_1_move_source_1/sub_1/test.txt")
 example-3:
 
 ```python
-from pyfs.filesystem import move
+from pysmall.fs import move
 
 # test move tree include
 move("./build/data_1_move_source_2","./build/data_1_move_include", 
@@ -161,24 +161,24 @@ assert not os.path.exists("./build/data_1_move_include/sub_1/test.md")
 assert os.path.exists("./build/data_1_move_source_2/sub_1/test.md")
 ```
 
-## module: pyfs.json
+## module: pysmall.json
 
 ```python
 # src/tests/test.py
 
-from pyfs.json import load_json, dump_json
+from pysmall.json import load_json, dump_json
 
 j1 = load_json("./data_2/json/1.json")
 dump_json(j1, "../../build/1.json")
 
 ```
 
-## module: pyfs.yaml
+## module: pysmall.yaml
 
 ```python
 # src/tests/test.py
 
-from pyfs.yaml import load_yaml_full, load_yaml_safe
+from pysmall.yaml import load_yaml_full, load_yaml_safe
 
 y = load_yaml_full("./data_2/yaml/0.yml", "./data_2/yaml")
 assert y["name"] == "0"
@@ -198,11 +198,11 @@ assert y["file2"] == None
 
 ```
 
-## module: pyfs.shell
+## module: pysmall.shell
 
 ```python
-from pfyfs.filesystem import current_dir
-from pyfs.shell import run_cmds
+from pysmall.fs import current_dir
+from pysmall.shell import run_cmds
 
 run_cmds(
     [
