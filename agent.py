@@ -154,6 +154,7 @@ if __name__=="__main__":
         source_with_doc_lines = []
         i=0
         while i<len(source_lines):
+            l = source_lines[i]
             source_with_doc_lines.append(l)
             if l.startswith('def '):
                 logger.info(l)
