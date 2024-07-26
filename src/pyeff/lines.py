@@ -42,8 +42,8 @@ def split_lines(lines, *patterns):
     for line in lines:
         for pattern in all_patterns:
             if re.match(pattern, line):
-                result[-1].append(line)
                 result.append([])
+                result[-1].append(line)
                 break
         else:
             result[-1].append(line)
