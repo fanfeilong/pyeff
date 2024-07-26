@@ -6,6 +6,8 @@ import fnmatch
 def ensure(target_dir):
     os.makedirs(target_dir, exist_ok=True)
 
+def current_dir(file):
+    return os.path.dirname(os.path.abspath(file))
 
 def _save_move(src, dst):
     if not os.path.exists(src):
@@ -266,7 +268,7 @@ def _save_remove(path):
         shutil.rmtree(path)
 
 
-def remove(src, mode="all", patterns=None):
+def _remove_once(src, mode="all", patterns=None):
 
     assert mode in ["ignore", "include", "all"]
 
@@ -276,7 +278,64 @@ def remove(src, mode="all", patterns=None):
         _removetree_by_os_walk_includes(src, *patterns)
     else:
         _save_remove(src)
+        
+def remove(src, mode="all", patterns=None):
+    if type(src)==type([]):
+        for item in src:
+            _remove_once(item, mode, patterns)
+    else:
+        _remove_once(src, mode, patterns)
 
 
-def current_dir(file):
-    return os.path.dirname(os.path.abspath(file))
+def _search_by_os_walk_includes(src, results, *patterns):
+    if patterns is None:
+        patterns = ["*"]
+
+    for root, dirs, files in os.walk(src):
+        matched_files = []
+        for pattern in patterns:
+            matched_files.extend(fnmatch.filter(files, pattern))
+
+        for file in matched_files:
+            src_file_path = os.path.join(root, file)
+            results.append((src_file_path))
+
+
+def _search_by_os_walk_ignores(src, results, *patterns):
+    if patterns is None:
+        patterns = []
+
+    for root, dirs, files in os.walk(src):
+        matched_files = []
+        for pattern in patterns:
+            matched_files.extend(fnmatch.filter(files, pattern))
+
+        for file in files:
+            if file not in matched_files:
+                src_file_path = os.path.join(root, file)
+                results.append((src_file_path))
+
+def search(src, results, mode="all", patterns=None):
+
+    assert mode in ["ignore", "include", "all"]
+
+    if mode == "ignore":
+        _search_by_os_walk_ignores(src, results, patterns=patterns)
+    elif mode == "include":
+        _search_by_os_walk_includes(src, results, patterns=patterns)
+    else:
+        _search_by_os_walk_ignores(src, results, patterns=[])
+
+def listdir(source_dir, extensions=[], sort=True, abs_path=True):
+    file_list = os.listdir(source_dir)
+    
+    if len(extensions)==0:
+        file_list = [file for file in file_list if any(file.endswith(ext) for ext in extensions)]
+        
+    if abs_path:
+        file_list = [os.path.join(source_dir, file) for file in file_list]
+        
+    if sort:
+        file_list = sorted(file_list)
+    
+    return file_list

@@ -1,12 +1,59 @@
 import os
 import re
 
+def load_all_text(file_name):
+    with open(file_name, 'r') as f:
+        return f.read()
+
+def dump_all_text(content, file_name):
+    with open(file_name, 'w') as f:
+        f.write(content)
+
+def load_lines(file_name, remove_new_line=False):
+    with open(file_name, 'r') as f:
+        lines = f.readlines()
+    
+    if remove_new_line:
+        lines = [l.strip('\n') for l in lines]
+    
+    return lines
+
+def dump_lines(lines, file_name, append_new_lines=False):
+    if append_new_lines:
+        lines = [l+'\n' for l in lines]
+        
+    with open(file_name, 'w') as f:
+        f.writelines(lines)
+
+def dump_all_text(content, file_name):
+    with open(file_name, 'w') as f:
+        f.write(content)
+
+def split_lines(lines, *patterns):
+    all_patterns = []
+    for pattern in patterns:
+        if isinstance(pattern, str):
+            all_patterns.append(re.compile(pattern))
+        else:
+            all_patterns.extend(pattern)
+    
+    result = [[]]
+    
+    for line in lines:
+        for pattern in all_patterns:
+            if re.match(pattern, line):
+                result[-1].append(line)
+                result.append([])
+                break
+        else:
+            result[-1].append(line)
+    
+    return [lines for lines in result if lines]
 
 def append_lines(file_name, list_of_lines):
     with open(file_name, "a") as f:
         lines = [l + "\n" for l in list_of_lines]
         f.writelines(lines)
-
 
 def insert_lines(file_name, list_of_lines, head=None, patterns=None):
     dummy_file = file_name + ".bak"
