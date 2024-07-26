@@ -83,6 +83,8 @@ if __name__=="__main__":
     pyeff.fs.remove(comment_files)
     
     for source in pyeff.fs.listdir(source_dir, sort=True, extensions=['.py'], abs_path=True):
+        logger.info(f"load soure: {source}")
+        
         lines = pyeff.lines.load_lines(source)
         
         lines_groups = pyeff.lines.split_lines(lines, ["def "])
@@ -98,8 +100,10 @@ if __name__=="__main__":
             merge_part.extend(part)
         pyeff.lines.dump_lines(merge_part, source_parts)
         
-        new_lines = []
         
+        logger.info(f"call llm to gen comment..")
+        
+        new_lines = []
         for part_lines in lines_groups:
             has_def = False
             for l in part_lines:
@@ -114,14 +118,12 @@ if __name__=="__main__":
                 )
                 new_lines.extend(new_part_lines)
                 new_lines.extend(["\n"])
-
         pyeff.lines.dump_lines(new_lines, source_with_comment)
-        
-        logger.info(f'source_with_comment: {source_with_comment}')
         
         source_lines = pyeff.lines.load_lines(source)
         comment_lines = pyeff.lines.load_lines(source_with_comment)
         
+        logger.info(f"parse func doc dict: {source}")
         func_doc_dict = {}
         i=0
         while i<len(comment_lines):
@@ -148,6 +150,7 @@ if __name__=="__main__":
             else:
                 i+=1
         
+        logger.info(f"apply func doc: {source}")
         source_with_doc_lines = []
         i=0
         while i<len(source_lines):
@@ -166,3 +169,5 @@ if __name__=="__main__":
             source_with_comment,
             source_parts,
         ])
+        
+        logger.info(f'source with doc: {source}')
