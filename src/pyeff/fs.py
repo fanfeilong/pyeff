@@ -332,7 +332,7 @@ def search(src, mode="all", patterns=None):
 def listdir(source_dir, extensions=[], sort=True, abs_path=True):
     file_list = os.listdir(source_dir)
     
-    if len(extensions)==0:
+    if len(extensions)>0:
         file_list = [file for file in file_list if any(file.endswith(ext) for ext in extensions)]
         
     if abs_path:
