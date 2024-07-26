@@ -315,8 +315,9 @@ def _search_by_os_walk_ignores(src, results, *patterns):
                 src_file_path = os.path.join(root, file)
                 results.append((src_file_path))
 
-def search(src, results, mode="all", patterns=None):
-
+def search(src, mode="all", patterns=None):
+    results = []
+    
     assert mode in ["ignore", "include", "all"]
 
     if mode == "ignore":
@@ -325,6 +326,8 @@ def search(src, results, mode="all", patterns=None):
         _search_by_os_walk_includes(src, results, patterns=patterns)
     else:
         _search_by_os_walk_ignores(src, results, patterns=[])
+    
+    return results
 
 def listdir(source_dir, extensions=[], sort=True, abs_path=True):
     file_list = os.listdir(source_dir)
