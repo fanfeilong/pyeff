@@ -154,9 +154,9 @@ if __name__=="__main__":
         source_with_doc_lines = []
         i=0
         while i<len(source_lines):
-            l = source_lines[i]
             source_with_doc_lines.append(l)
-            if l.startswith('def ')>=0:
+            if l.startswith('def '):
+                logger.info(l)
                 ll = source_lines[i+1]
                 if not ll.strip().startswith('"""'):
                     func_doc_lines = func_doc_dict.get(l)
