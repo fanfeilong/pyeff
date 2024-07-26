@@ -320,12 +320,12 @@ def search(src, mode="all", patterns=None):
     
     assert mode in ["ignore", "include", "all"]
 
-    if mode == "ignore":
-        _search_by_os_walk_ignores(src, results, patterns=patterns)
-    elif mode == "include":
-        _search_by_os_walk_includes(src, results, patterns=patterns)
+    if mode == "ignore" and patterns is not None:
+        _search_by_os_walk_ignores(src, results, *patterns)
+    elif mode == "include" and patterns is not None:
+        _search_by_os_walk_includes(src, results, *patterns)
     else:
-        _search_by_os_walk_ignores(src, results, patterns=[])
+        _search_by_os_walk_ignores(src, results)
     
     return results
 
