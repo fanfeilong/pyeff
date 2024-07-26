@@ -162,6 +162,7 @@ if __name__=="__main__":
                     func_doc_lines = func_doc_dict.get(l)
                     if func_doc_lines is not None:
                         source_with_doc_lines.extend(func_doc_lines)
+            i+=1
         
         pyeff.lines.dump_lines(source_with_doc_lines, source)
         
