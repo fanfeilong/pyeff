@@ -9,6 +9,7 @@ if __name__ == "__main__":
     pip install -r requirements-dev.txt
     python agent.comment --token=...
     python agent.test
+    python agent.publish
 
     TODO: chain agent.comment and agent.test
     """
@@ -27,6 +28,12 @@ if __name__ == "__main__":
                 comment=CommentAgent(),
                 test=lambda config, options: run_cmds(
                     [f"pip install {dir}", "cd src/tests && python test.py"]
+                ),
+                publish=lambda config, options: run_cmds(
+                    [
+                        "python setup.py bdist_wheel --universal",
+                        "twine upload dist/* --verbos",
+                    ]
                 ),
             )
         )
