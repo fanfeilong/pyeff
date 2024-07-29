@@ -80,7 +80,7 @@ def _is_directory_empty(directory):
     :rtype: bool
     """
     with os.scandir(directory) as scan:
-        return not any(scan)  # 如果目录为空，返回True，否则返回False
+        return not any(scan)
 
 
 def _movetree_by_os_walk_includes(src, dst, *patterns):
@@ -93,29 +93,25 @@ def _movetree_by_os_walk_includes(src, dst, *patterns):
     :param dst: Destination directory path where files will be moved to.
     :param patterns: Wildcard patterns used to select files to move. Defaults to ["*"], which moves all files.
     """
-    # 确保目标目录存在
     os.makedirs(dst, exist_ok=True)
 
     if patterns is None:
-        patterns = ["*"]  # 默认复制所有文件
+        patterns = ["*"]
 
     for root, dirs, files in os.walk(src):
-        # 计算目标目录的路径
         dest_dir = os.path.join(dst, os.path.relpath(root, src))
         os.makedirs(dest_dir, exist_ok=True)
 
-        # 过滤出匹配指定一组模式的文件列表
         matched_files = []
         for pattern in patterns:
             matched_files.extend(fnmatch.filter(files, pattern))
 
-        # 移动所有符合条件的文件
-        moved = False  # 标识是否移动过文件
+        moved = False
         for file in matched_files:
             src_file_path = os.path.join(root, file)
             dest_file_path = os.path.join(dest_dir, file)
             shutil.move(src_file_path, dest_file_path)
-            moved = True  # 发生了移动
+            moved = True
 
         if moved and _is_directory_empty(root):
             os.rmdir(root)
@@ -132,33 +128,27 @@ def _movetree_by_os_walk_ignores(src, dst, *patterns):
     :param patterns: A variable number of wildcard patterns to ignore files.
                       If none provided, all files are considered.
     """
-    # 确保目标目录存在
     os.makedirs(dst, exist_ok=True)
 
     if patterns is None:
         patterns = []
 
-    # 使用os.walk遍历所有文件和文件夹
     for root, dirs, files in os.walk(src):
-        # 计算目标目录的路径
         dest_dir = os.path.join(dst, os.path.relpath(root, src))
         os.makedirs(dest_dir, exist_ok=True)
 
-        # 过滤出匹配指定一组模式的文件列表
         matched_files = []
         for pattern in patterns:
             matched_files.extend(fnmatch.filter(files, pattern))
 
-        # 移动所有不符合条件的文件
-        moved = False  # 标识是否移动过文件
+        moved = False
         for file in files:
             if file not in matched_files:
                 src_file_path = os.path.join(root, file)
                 dest_file_path = os.path.join(dest_dir, file)
                 shutil.move(src_file_path, dest_file_path)
-                moved = True  # 发生了移动
+                moved = True
 
-        # 如果当前目录移动了文件，并且目录现在为空，则删除空目录
         if moved and _is_directory_empty(root):
             os.rmdir(root)
 
@@ -230,8 +220,6 @@ def _copytree_by_shutils_includes(src, dst, *patterns):
     """
 
     def include_patterns(*patterns):
-        """只包含匹配模式的文件."""
-
         def _ignore_patterns(path, names):
             keepers = set()
             for pattern in patterns:
