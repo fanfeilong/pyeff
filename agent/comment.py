@@ -5,6 +5,8 @@ from typing import Any
 from openai import OpenAI
 from src import pyeff
 
+from datetime import datetime
+
 from loguru import logger
 
 
@@ -64,26 +66,25 @@ class FunctionComment:
 
 class CommentAgent:
     def __init__(self) -> None:
-        pass
+        self.config = None
+        self.options = None
+        self.func_comment = None
 
     def run(self, config, options) -> Any:
         logger.info("run comment agent")
+
         self.config = config
         self.options = options
 
-        dir = pyeff.fs.current_dir(__file__)
-        root_dir = os.path.dirname(dir)
+        _dir = pyeff.fs.current_dir(__file__)
+        root_dir = os.path.dirname(_dir)
         source_dir = os.path.join(root_dir, "src/pyeff")
-
-        pyeff.shell.run_cmds(
-            ["git clean -df .", "git checkout ."], cwd=source_dir, check=True
-        )
 
         client = OpenAI(
             api_key=self.options.token, base_url="https://api.siliconflow.cn/v1"
         )
 
-        func_comment = FunctionComment(client)
+        self.func_comment = FunctionComment(client)
 
         comment_files = pyeff.fs.search(
             source_dir, mode="include", patterns=["*.comment.py"]
@@ -96,111 +97,144 @@ class CommentAgent:
         for source in pyeff.fs.listdir(
             source_dir, sort=True, extensions=[".py"], abs_path=True
         ):
-            pyeff.logger.logger_table_begin("source coment agent")
+            self.__inter(source)
 
-            pyeff.logger.logger_section(f"load soure: {source}")
+        self.__save_point(source_dir)
 
-            source_with_comment = source + ".comment.py"
-            source_parts = source + ".part.comment.py"
+    def __inter(self, source):
 
-            source_lines = pyeff.lines.load_lines(source)
-            source_lines_groups = pyeff.lines.split_lines(source_lines, ["def "])
+        file_collector = []
 
-            part_lines = []
-            for part in source_lines_groups:
-                part_lines.append("# -------\n")
-                part_lines.append("# part\n")
-                part_lines.append("# -------\n")
-                part_lines.extend(part)
-            pyeff.lines.dump_lines(part_lines, source_parts)
+        # load
+        source_lines = pyeff.lines.load_lines(source)
 
-            pyeff.logger.logger_section(f"call llm to gen comment {source}")
-            comment_lines = []
-            for part_lines in source_lines_groups:
-                has_def = False
-                for l in part_lines:
-                    if l.find("def ") >= 0:
-                        has_def = True
-                if not has_def:
-                    comment_lines.extend(part_lines)
-                    comment_lines.extend(["\n"])
-                else:
-                    new_part_lines = func_comment.run(
-                        lines=part_lines,
-                    )
-                    comment_lines.extend(new_part_lines)
-                    comment_lines.extend(["\n"])
+        # split funcs
+        source_lines_groups, source_with_parts = self.__split_func(source, source_lines)
+        file_collector.append(source_with_parts)
 
-            pyeff.lines.dump_lines(comment_lines, source_with_comment)
+        # gen comment lines by llm
+        comment_lines, source_with_comment = self.__gen_func_doc(
+            source, source_lines_groups
+        )
+        file_collector.append(source_with_comment)
 
-            pyeff.logger.logger_section(f"parse func doc dict: {source}")
-            func_doc_dict = {}
-            i = 0
-            while i < len(comment_lines):
-                l = comment_lines[i]
-                if l.startswith("def "):
-                    j = i + 1
-                    func_doc_lines = []
-                    ddd_count = 0
-                    while j < len(comment_lines):
-                        ll = comment_lines[j]
-                        if ll.strip().startswith('"""'):
-                            ddd_count += 1
-                            if ddd_count == 1:
-                                logger.info(l)
+        # build func-doc dict
+        func_doc_dict = self.__build_func_doc_index(source, comment_lines)
 
-                        if ddd_count > 0:
-                            func_doc_lines.append(ll)
+        # apply func doc to soruce
+        source_with_doc_lines, source_with_append_comments = self.__apply_func_doc(
+            source, source_lines_groups, func_doc_dict
+        )
+        file_collector.append(source_with_append_comments)
 
-                        if ddd_count == 2:
-                            break
+        # update
+        pyeff.lines.dump_lines(source_with_doc_lines, source)
 
-                        j += 1
+        # clean
+        pyeff.fs.remove(file_collector)
 
-                    func_doc_dict[l] = func_doc_lines
-                    i = j + 1
-                else:
-                    i += 1
+    def __split_func(self, source, source_lines):
+        logger.info(f"__split_func {source}")
+        source_lines_groups = pyeff.lines.split(source_lines, ["def .*"])
+        lines_with_part_comment = pyeff.lines.insert(
+            source_lines,
+            [
+                "# ------------------------------------",
+                "# dump part, for debug",
+                "# ------------------------------------",
+            ],
+            patterns=["def .*"],
+            append_new_line=True,
+            insert_before=True,
+        )
+        source_with_parts = source + ".part.comment.py"
+        pyeff.lines.dump_lines(lines_with_part_comment, source_with_parts)
+        return source_lines_groups, source_with_parts
 
-            pyeff.logger.logger_section(f"apply func doc: {source}")
-            source_with_doc_lines = []
-            i = 0
-            while i < len(source_lines):
-                l = source_lines[i]
-                source_with_doc_lines.append(l)
-                if l.startswith("def "):
-                    j = i
-                    while j < len(source_lines):
-                        ll = source_lines[j]
-                        if ll.strip("\n").strip().endswith("):"):
-                            break
-                        j += 1
+    def __gen_func_doc(self, source, source_lines_groups):
+        logger.info(f"__gen_func_doc {source}")
+        comment_lines = []
+        for part_lines in source_lines_groups:
+            is_py_func = False
+            func = None
+            for l in part_lines:
+                if l.find("def ") >= 0:
+                    is_py_func = True
+                    func = l
 
-                    if j + 1 < len(source_lines):
-                        ll = source_lines[j + 1]
-                        if not ll.strip().startswith('"""'):
-                            func_doc_lines = func_doc_dict.get(l)
-
-                            k = i + 1
-                            while k <= j:
-                                source_with_doc_lines.append(source_lines[k])
-                                k += 1
-
-                            if func_doc_lines is not None:
-                                source_with_doc_lines.extend(func_doc_lines)
-
-                            i = j
-                i += 1
-
-            pyeff.lines.dump_lines(source_with_doc_lines, source)
-
-            pyeff.fs.remove(
-                [
-                    source_with_comment,
-                    source_parts,
-                ]
+            has_comment, _ = pyeff.lines.pair_match(
+                part_lines,
+                lambda l: l.strip("\n").strip().endswith("):"),
+                lambda l: l.strip().startswith('"""'),
             )
 
-            pyeff.logger.logger_section(f"source with doc: {source}")
+            if not is_py_func or has_comment:
+                # keep old lines
+                # comment_lines.extend(part_lines)
+                comment_lines.extend(["\n"])
+            else:
+                # gen comment lines with llm
+                logger.info(f"call llm for func: {func}...")
+                new_part_lines = self.func_comment.run(
+                    lines=part_lines,
+                )
+                comment_lines.extend(new_part_lines)
+                comment_lines.extend(["\n"])
 
-            pyeff.logger.logger_table_end("source coment agent")
+        source_with_comment = source + ".comment.py"
+        pyeff.lines.dump_lines(comment_lines, source_with_comment)
+
+        return comment_lines, source_with_comment
+
+    def __build_func_doc_index(self, source, comment_lines):
+        logger.info(f"__build_func_doc_index {source}")
+        func_doc_dict = {}
+        for part_lines in pyeff.lines.split(comment_lines, ["def .*"]):
+            l = part_lines[0]
+            if l.startswith("def "):
+                print(l)
+                func_doc_lines, _ = pyeff.lines.extract(
+                    part_lines,
+                    lambda l: l.strip().startswith('"""'),
+                    lambda l: l.strip().startswith('"""'),
+                )
+                func_doc_dict[l] = func_doc_lines
+        return func_doc_dict
+
+    def __apply_func_doc(self, source, source_lines_groups, func_doc_dict):
+        logger.info(f"__apply_func_doc {source}")
+        source_with_doc_lines = []
+        for part_lines in source_lines_groups:
+            l = part_lines[0]
+            if l.startswith("def ") and func_doc_dict.get(l) is not None:
+                func_has_no_comment, last_pos = pyeff.lines.continue_match(
+                    part_lines,
+                    lambda l: l.strip("\n").strip().endswith("):"),
+                    lambda l: not l.strip().startswith('"""'),
+                )
+                if func_has_no_comment:
+                    source_with_doc_lines.extend(part_lines[0 : last_pos + 1])
+                    source_with_doc_lines.extend(func_doc_dict.get(l))
+                    source_with_doc_lines.extend(part_lines[last_pos + 1 :])
+            else:
+                source_with_doc_lines.extend(part_lines)
+
+        source_with_append_comments = source + ".new.comment.py"
+        pyeff.lines.dump_lines(source_with_doc_lines, source_with_append_comments)
+        return source_with_doc_lines, source_with_append_comments
+
+    def __save_point(self, source_dir):
+        y = input("safe auto comment? [y/n/i]")
+        if y == "y":
+            commit_name = f"agent_comment_{datetime.now()}"
+            pyeff.shell.run_cmds(
+                ["git add .", f'git commit -m "{commit_name}"'],
+                cwd=source_dir,
+                check=True,
+            )
+        elif y == "n":
+            pyeff.shell.run_cmds(
+                ["git clean -df .", "git checkout ."], cwd=source_dir, check=True
+            )
+        else:
+            pass
