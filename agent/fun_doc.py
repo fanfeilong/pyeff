@@ -10,7 +10,7 @@ from datetime import datetime
 from loguru import logger
 
 
-class FunctionComment:
+class FunctionDocGenerator:
     def __init__(self, client) -> None:
         self.client = client
 
@@ -64,14 +64,14 @@ class FunctionComment:
         return codes
 
 
-class CommentAgent:
+class FuncDocAgent:
     def __init__(self) -> None:
         self.config = None
         self.options = None
-        self.func_comment = None
+        self.func_doc_gen = None
 
     def run(self, config, options) -> Any:
-        logger.info("run comment agent")
+        logger.info("run fun doc agent")
 
         self.config = config
         self.options = options
@@ -80,7 +80,7 @@ class CommentAgent:
             api_key=self.options.token, base_url="https://api.siliconflow.cn/v1"
         )
 
-        self.func_comment = FunctionComment(client)
+        self.func_doc_gen = FunctionDocGenerator(client)
 
         self.__loop()
 
@@ -181,7 +181,7 @@ class CommentAgent:
             else:
                 # gen comment lines with llm
                 logger.info(f"call llm for func: {func}...")
-                new_part_lines = self.func_comment.run(
+                new_part_lines = self.func_doc_gen.run(
                     lines=part_lines,
                 )
                 comment_lines.extend(new_part_lines)

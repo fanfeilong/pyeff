@@ -1,13 +1,13 @@
 from pyouter.app import App
 from pyouter.router import Router
-from agent.comment import CommentAgent
+from agent.fun_doc import FuncDocAgent
 from pyeff.shell import run_cmds
 from pyeff.fs import current_dir
 
 if __name__ == "__main__":
     """
     pip install -r requirements-dev.txt
-    python agent.comment --token=...
+    python agent.func.doc --token=...
     python agent.test
     python agent.publish
 
@@ -25,7 +25,9 @@ if __name__ == "__main__":
     app.use(
         router=Router(
             agent=Router(
-                comment=CommentAgent(),
+                func=Router(
+                    doc=FuncDocAgent(),
+                ),
                 test=lambda config, options: run_cmds(
                     [f"pip install {dir}", "cd src/tests && python test.py"]
                 ),
