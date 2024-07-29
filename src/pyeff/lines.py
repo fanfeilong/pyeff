@@ -1,6 +1,7 @@
 import os
 import re
 
+
 def load_all_text(file_name):
     """
     Load and return the entire content of a text file.
@@ -11,38 +12,41 @@ def load_all_text(file_name):
     Returns:
         str: The contents of the file as a single string.
     """
-    with open(file_name, 'r') as f:
+    with open(file_name, "r") as f:
         return f.read()
+
 
 def dump_all_text(content, file_name):
     """
     Write the entire content to a specified file.
-    
+
     Args:
         content (str): The text content to be written to the file.
         file_name (str): The name of the file to which the content will be written.
     """
-    with open(file_name, 'w') as f:
+    with open(file_name, "w") as f:
         f.write(content)
+
 
 def load_lines(file_name, remove_new_line=False):
     """
     This function reads a text file and loads its content into a list of lines.
-    
+
     Args:
         file_name (str): The name or path of the file to be read.
         remove_new_line (bool, optional): A flag indicating whether to remove newline characters from the end of each line. Defaults to False.
-        
+
     Returns:
         list[str]: A list containing the lines of the file. If remove_new_line is True, newline characters are stripped from each line's end.
     """
-    with open(file_name, 'r') as f:
+    with open(file_name, "r") as f:
         lines = f.readlines()
-    
+
     if remove_new_line:
-        lines = [l.strip('\n') for l in lines]
-    
+        lines = [l.strip("\n") for l in lines]
+
     return lines
+
 
 def dump_lines(lines, file_name, append_new_lines=False):
     """
@@ -52,38 +56,28 @@ def dump_lines(lines, file_name, append_new_lines=False):
         lines (list of str): The list of strings to be written to the file.
         file_name (str): The name of the file to write to.
         append_new_lines (bool, optional): If True, appends a newline character to each string in the list. Defaults to False.
-    
+
     """
     if append_new_lines:
-        lines = [l+'\n' for l in lines]
-        
-    with open(file_name, 'w') as f:
+        lines = [l + "\n" for l in lines]
+
+    with open(file_name, "w") as f:
         f.writelines(lines)
 
-def dump_all_text(content, file_name):
-    """
-    Write the entire content to a specified file.
-    
-    Args:
-        content (str): The text content to be written to the file.
-        file_name (str): The name of the file to which the content will be written.
-    """
-    with open(file_name, 'w') as f:
-        f.write(content)
 
 def split_lines(lines, *patterns):
     """
     Splits a list of strings ('lines') into sublists based on matching patterns.
     Patterns can be either string regex patterns or pre-compiled regex objects.
-    
+
     Args:
     - lines: A list of strings to be split.
     - *patterns: Variable length argument list, where each argument can be a string regex or a regex pattern object.
-    
+
     The function compiles string patterns into regex objects and then iterates through each line.
     If a line matches any of the patterns, it starts a new sublist in the result.
     All non-matching lines are appended to the current sublist.
-    
+
     Returns:
     A list of sublists, where each sublist contains lines that don't match any following patterns
     from the start of the line.
@@ -94,9 +88,9 @@ def split_lines(lines, *patterns):
             all_patterns.append(re.compile(pattern))
         else:
             all_patterns.extend(pattern)
-    
+
     result = [[]]
-    
+
     for line in lines:
         for pattern in all_patterns:
             if re.match(pattern, line):
@@ -105,32 +99,20 @@ def split_lines(lines, *patterns):
                 break
         else:
             result[-1].append(line)
-    
+
     return [lines for lines in result if lines]
 
-def append_lines(file_name, list_of_lines):
-    """
-    Appends a list of strings as new lines to the end of a specified file.
-    
-    Args:
-        file_name (str): The name or path of the file to which lines will be appended.
-        list_of_lines (list of str): The list of strings that will be written to the file,
-                                   each followed by a newline character.
-    """
-    with open(file_name, "a") as f:
-        lines = [l + "\n" for l in list_of_lines]
-        f.writelines(lines)
 
 def insert_lines(file_name, list_of_lines, head=None, patterns=None):
     """
     Insert lines into a file before a specified line that either starts with a 'head' string or matches patterns.
-    
+
     Args:
         file_name (str): The name of the file to insert lines into.
         list_of_lines (list of str): The lines of text to insert.
         head (str, optional): A header string. Lines are inserted before any line starting with this string. Defaults to None.
         patterns (list of str, optional): A list of regex patterns. If specified, lines are inserted before any line matching any of these patterns. Defaults to None.
-    
+
     Returns:
         bool: True if lines were inserted, False otherwise. The original file is backed up and then replaced with the modified content.
     """
@@ -169,7 +151,7 @@ def comment_line(file_name, head, patterns, commentor="#"):
     """
     This function comments out or modifies lines in a file starting with a specified header,
     based on a set of patterns using regular expressions. It creates a backup of the original
-    file, processes the file to comment lines that meet the criteria, and then replaces the 
+    file, processes the file to comment lines that meet the criteria, and then replaces the
     original file if changes were made.
 
     Parameters:

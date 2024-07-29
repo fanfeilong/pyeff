@@ -226,3 +226,11 @@ run_cmds(
 )
 
 ```
+
+## module: pyeff.lines
+
+* `load_all_text` load all text from file
+* `dump_all_text` dump all text to file
+* `load_lines` load all lines from file, support remove '\n' by remove_new_line option
+* `dump_lines` dump all lines to file, support append '\n' by append_new_lines option
+* `split_lines` load and split lines in to group by regex pattern
