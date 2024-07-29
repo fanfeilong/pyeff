@@ -10,6 +10,16 @@ pip install pyeff
 
 ## module: pyeff.fs
 
+all API in pyeff.fs:
+
+* `remove` remove file, files or dir
+* `copy` copy source file or dir to dest file or dir
+* `move` move source file or dir to dest file or dir
+* `search` search file dir in source dir
+* `ensure` remove dir if exists and create new
+* `current_dir` find current dir by file path, like `current_dir(__file__)`
+* `listdir` list sub path in source dir, filter by extensions, sort and return abs path
+
 ### API: pyeff.fs.remove
 
 * `remove(path, mode='all', patterns=[])`
