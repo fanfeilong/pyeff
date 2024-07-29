@@ -1,4 +1,22 @@
 def get_python_file_func_indent_spaces(filepath, func):
+    """
+    Retrieve the indentation spaces used before the function definition in a Python file.
+    
+    This function opens a Python file, searches for the given function definition,
+    and then determines the number of spaces or tabs used for indentation at the start of the line
+    following the function definition. It assumes that the function definition is properly formatted
+    and that the indented line following the function definition represents code within that function.
+    
+    Parameters:
+    - filepath (str): The path to the Python file.
+    - func (str): The name of the function to find the indentation for.
+
+    Returns:
+    - str: A string representing the indentation, consisting of spaces and/or tabs.
+
+    Raises:
+    - ValueError: If no indented lines are found following a line starting with the function name.
+    """
     with open(filepath, "r") as f:
         lines = f.readlines()
 
