@@ -5,3 +5,4 @@ from . import lines
 from . import logger
 from . import shell
 from . import yaml
+from . import hash
