@@ -76,16 +76,29 @@ class CommentAgent:
         self.config = config
         self.options = options
 
-        _dir = pyeff.fs.current_dir(__file__)
-        root_dir = os.path.dirname(_dir)
-        source_dir = os.path.join(root_dir, "src/pyeff")
-
         client = OpenAI(
             api_key=self.options.token, base_url="https://api.siliconflow.cn/v1"
         )
 
         self.func_comment = FunctionComment(client)
 
+        self.__loop()
+
+    def __loop(self):
+        source_dir = os.path.join(
+            os.path.dirname(pyeff.fs.current_dir(__file__)), "src/pyeff"
+        )
+
+        self.__clean(source_dir)
+
+        for source in pyeff.fs.listdir(
+            source_dir, sort=True, extensions=[".py"], abs_path=True
+        ):
+            self.__iter(source)
+
+        self.__save_point(source_dir)
+
+    def __clean(self, source_dir):
         comment_files = pyeff.fs.search(
             source_dir, mode="include", patterns=["*.comment.py"]
         )
@@ -94,14 +107,7 @@ class CommentAgent:
 
         pyeff.fs.remove(comment_files)
 
-        for source in pyeff.fs.listdir(
-            source_dir, sort=True, extensions=[".py"], abs_path=True
-        ):
-            self.__inter(source)
-
-        self.__save_point(source_dir)
-
-    def __inter(self, source):
+    def __iter(self, source):
 
         file_collector = []
 
