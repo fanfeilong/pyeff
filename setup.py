@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="pyeff",
-    version="0.1.1",
+    version="0.1.2",
     description="Small Python lib, User friendly API for daily python code.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -26,5 +26,12 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3 :: Only",
         "License :: OSI Approved :: MIT License",
+    ],
+    install_requires=[
+        "loguru",
+        "requests",
+        "pyyaml >= 5.1",
+        "pyyaml-include>=2.0",
+        "aiofiles",
     ],
 )
