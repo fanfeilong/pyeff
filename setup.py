@@ -8,7 +8,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="pyeff",
-    version="0.1.2",
+    version="0.1.3",
     description="Small Python lib, User friendly API for daily python code.",
     long_description=long_description,
     long_description_content_type="text/markdown",
