@@ -103,6 +103,135 @@ def split(lines, *patterns):
     return [lines for lines in result if lines]
 
 
+def split_struct(lines, pattern_dict, calc_indent):
+    current_block = {"name": "top", "pattern": None, "lines": [], "body": []}
+    block_stack = [current_block]
+
+    # parse blocks
+    for line in lines:
+        for name in pattern_dict:
+            item = pattern_dict[name]
+            pattern = item["pattern"]
+            patterns = []
+            if type(pattern) == type(""):
+                patterns.append(pattern)
+            elif type(pattern) == type([]):
+                patterns.extend(pattern)
+
+            has_match = False
+            for p in patterns:
+                if re.match(p, line):
+                    current_block = {
+                        "name": name,
+                        "pattern": pattern,
+                        "lines": [],
+                        "body": [],
+                    }
+                    block_stack.append(current_block)
+                    has_match = True
+                    break
+            if has_match:
+                break
+        current_block["lines"].append(line)
+
+    # chain blocks by indent
+    i = 0
+    cur_indent = 0
+    cur_depth = 0
+    indent_depth_map = {}
+    pre_indent_last_block_stack = []
+    pre_indent_last_block = None
+    cur_indent_last_block = None
+
+    top_indent = None
+    top_blocks = []
+    while i < len(block_stack):
+        pre_blocks = block_stack[0:i]
+
+        block = block_stack[i]
+        block_indent = calc_indent(block, pre_blocks, cur_indent)
+        block["indent"] = block_indent
+
+        if block_indent < 0:
+            i += 1
+            continue
+
+        if top_indent is None:
+            top_indent = block_indent
+            cur_depth = 0
+            indent_depth_map[block_indent] = cur_depth
+            cur_indent = block_indent
+
+        if block_indent > cur_indent:
+            # indent step
+            if pre_indent_last_block:
+                pre_indent_last_block["body"].append(block)
+            else:
+                cur_indent_last_block["body"].append(block)
+
+            # cur_indent_last_block is the new pre indent last block
+            pre_indent_last_block_stack.append(pre_indent_last_block)
+            pre_indent_last_block = cur_indent_last_block
+            cur_indent_last_block = block
+
+            cur_depth += 1
+            indent_depth_map[block_indent] = cur_depth
+        elif block_indent < cur_indent:
+            # indent back
+            target_depth = indent_depth_map[block_indent]
+            offset = cur_depth - target_depth
+            k = 0
+            while k < offset:
+                pre_indent_last_block = (
+                    pre_indent_last_block_stack.pop()
+                    if len(pre_indent_last_block_stack) > 0
+                    else None
+                )
+                k += 1
+                cur_depth -= 1
+
+            cur_indent_last_block = block
+
+            if pre_indent_last_block:
+                pre_indent_last_block["body"].append(block)
+        else:
+            # indent keep
+            cur_indent_last_block = block
+
+            if pre_indent_last_block:
+                pre_indent_last_block["body"].append(block)
+
+        # update cur indent
+        cur_indent = block_indent
+
+        if block_indent == top_indent:
+            top_blocks.append(block)
+
+        i += 1
+
+    return top_blocks
+
+
+def py_tabspaces(lines):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+        if stripped:
+            pos = line.find(stripped)
+            if pos >= 0:
+                tab_spaces = []
+                for i in range(0, pos):
+                    if line[i] == " ":
+                        tab_spaces.append(" ")
+                    elif line[i] == "\t":
+                        tab_spaces.append("\t")
+                return "".join(tab_spaces)
+        i += 1
+
+    raise ValueError("No indented lines found.")
+
+
 def insert(
     source_lines,
     insert_lines,
@@ -150,16 +279,16 @@ def insert(
 def find(lines, *patterns):
     """
     Search for any of the given patterns in the provided lines of text.
-    
+
     This function iterates over each line in the 'lines' iterable and checks
     if it matches any of the regex patterns provided in 'patterns' using
     Python's `re.match`. If a match is found, it immediately returns True.
     If no matches are found after checking all lines and patterns, it returns False.
-    
+
     Parameters:
     - lines (iterable of str): The lines of text to search through.
     - patterns (str): Variable number of regex patterns to search for.
-    
+
     Returns:
     - bool: True if any pattern matches a line, False otherwise.
     """
@@ -172,9 +301,9 @@ def find(lines, *patterns):
 
 def pair_match(lines, first, second):
     """
-    Check if there exists a pair of consecutive elements in 'lines' 
+    Check if there exists a pair of consecutive elements in 'lines'
     where 'first' condition is true for the first element and 'second' condition is true for the second element.
-    
+
     Args:
     lines (list): A list of elements to be checked.
     first (function): A function that takes an element from 'lines' and returns a boolean.
@@ -200,7 +329,7 @@ def continue_match(lines, first, second):
     """
     Checks a sequence of lines to find if there's an occurrence where `first` condition is met,
     immediately followed by another occurrence where `second` condition is met at exact next line.
-    
+
     Args:
         lines (list): A list of strings, representing lines of text to be examined.
         first (function): A function that takes a string and returns a boolean indicating if the condition is met.
@@ -232,7 +361,7 @@ def extract(lines, start, finish):
     """
     Extracts lines from a list 'lines' starting from the line where the 'start' function returns True
     until the line where the 'finish' function returns True, inclusive of the lines where these conditions are met.
-    
+
     Args:
         lines (list of str): The list of lines to be processed.
         start (function): A function that takes a string (line) and returns a boolean, indicating the start condition.
