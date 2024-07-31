@@ -104,6 +104,24 @@ def split(lines, *patterns):
 
 
 def split_struct(lines, pattern_dict, calc_indent):
+    """
+    Parse a list of lines into structured blocks based on patterns and indentation.
+    
+    This function iterates through each line of input, identifying blocks that match
+    patterns defined in `pattern_dict`. It organizes these blocks hierarchically 
+    according to their indentation level, calculated by `calc_indent` function.
+    
+    Args:
+    - lines (list of str): The input lines of text to be parsed.
+    - pattern_dict (dict): A dictionary where keys are block names and values are
+      patterns (either a string or a list of strings) used to match block start.
+    - calc_indent (function): A function that takes a block and preceding blocks
+      to calculate the indentation level of the block.
+      
+    Returns:
+    - list of dict: A list of block dictionaries, each representing a structured block
+      with details like 'name', 'pattern', 'lines', 'body', and calculated 'indent'.
+    """
     current_block = {"name": "top", "pattern": None, "lines": [], "body": []}
     block_stack = [current_block]
 
@@ -213,6 +231,21 @@ def split_struct(lines, pattern_dict, calc_indent):
 
 
 def py_tabspaces(lines):
+    """
+    This function examines a list of strings (`lines`) to identify the leading whitespace
+    (spaces and tabs) of the first non-empty line. It returns a string representing this
+    indentation, composed of either spaces or tabs. If no indented lines are found, it raises
+    a ValueError.
+
+    Args:
+        lines (list[str]): A list of strings representing lines of code or text.
+
+    Returns:
+        str: The whitespace indentation of the first non-empty line.
+
+    Raises:
+        ValueError: If the provided list does not contain any indented lines.
+    """
     i = 0
     while i < len(lines):
         line = lines[i]
