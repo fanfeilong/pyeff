@@ -1,7 +1,8 @@
 import os
+import subprocess
+import fnmatch
 
 from loguru import logger
-
 
 def run_cmds(cmds, cwd=None, tip=None, check=False, join=False):
     """
@@ -95,3 +96,68 @@ def _run_cmds_split(cmds, cwd=None, tip=None, check=False):
 
         rets.append(ret)
     return rets
+
+def compress_to_tar_gz(target_directory, file_list, output_tar_gz):
+    if not os.path.isdir(target_directory):
+        raise ValueError(f"Target directory '{target_directory}' does not exist or is not a directory.")
+    
+    if os.path.exists(output_tar_gz):
+        raise ValueError(f"Output file '{output_tar_gz}' already exists.")
+
+    temp_file_list = 'temp_files.txt'
+
+    temp_file_list = []
+    for file in file_list:
+        if not os.path.isabs(file):
+            file = os.path.join(target_directory, file)
+        if not os.path.isfile(file):
+            raise ValueError(f"File '{file}' does not exist.")
+        
+        if not os.path.commonpath([target_directory]) == os.path.commonpath([target_directory, file]):
+            raise ValueError(f"File '{file}' is not within the target directory '{target_directory}'.")
+
+        relative_path = os.path.relpath(file, start=target_directory)
+        temp_file_list.append(relative_path)
+    
+    with open(temp_file_list, 'w') as f:
+        for file in temp_file_list:
+            f.write(f"{file}\n")
+
+    try:
+        subprocess.run(['tar', '-czf', output_tar_gz, '-T', temp_file_list, '-C', target_directory], check=True)
+    finally:
+        os.remove(temp_file_list)
+
+    print(f"Compression successful: '{output_tar_gz}'")
+    
+def extract_from_tar(tar_file, output_directory, file_patterns=None):
+    if not os.path.isfile(tar_file):
+        raise ValueError(f"Tar file '{tar_file}' does not exist or is not a file.")
+
+    if not os.path.isdir(output_directory):
+        raise ValueError(f"Output directory '{output_directory}' does not exist or is not a directory.")
+    
+    if file_patterns is None:
+        file_patterns = []
+
+    temp_file_list = 'temp_files.txt'
+
+    result = subprocess.run(['tar', '-tf', tar_file], capture_output=True, text=True, check=True)
+    all_files = result.stdout.splitlines()
+
+    if file_patterns:
+        matching_files = [file for file in all_files if any(fnmatch.fnmatch(file, pattern) for pattern in file_patterns)]
+        files_to_extract = matching_files
+    else:
+        files_to_extract = all_files
+
+    with open(temp_file_list, 'w') as f:
+        for file in files_to_extract:
+            f.write(f"{file}\n")
+
+    try:
+        subprocess.run(['tar', '-xvf', tar_file, '-T', temp_file_list, '-C', output_directory], check=True)
+    finally:
+        os.remove(temp_file_list)
+
+    print(f"Extraction successful to '{output_directory}'")
