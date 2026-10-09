@@ -1,236 +1,267 @@
 # pyeff
 
-a small python library, which include user friendly api, includes fs, json, yaml, logger, and so on.
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Install
+A user-friendly Python utility library for daily coding tasks. Provides simplified APIs for file operations, JSON/YAML handling, shell commands, and more.
+
+## Features
+
+- **Type Hints**: Full type annotations for better IDE support
+- **Pathlib Support**: All path arguments accept both `str` and `Path`
+- **Proper Exceptions**: Clear error messages with appropriate exception types
+- **Async Support**: Optional async versions for I/O operations
+- **Pattern Matching**: Include/ignore patterns for file operations
+
+## Installation
 
 ```bash
 pip install pyeff
 ```
 
-## module: pyeff.fs
+With async support:
 
-all API in pyeff.fs:
-
-* `remove` remove file, files or dir
-* `copy` copy source file or dir to dest file or dir
-* `move` move source file or dir to dest file or dir
-* `search` search file dir in source dir
-* `ensure` remove dir if exists and create new
-* `current_dir` find current dir by file path, like `current_dir(__file__)`
-* `listdir` list sub path in source dir, filter by extensions, sort and return abs path
-
-### API: pyeff.fs.remove
-
-* `remove(path, mode='all', patterns=[])`
-* option mode  `'ignore'`, `'include'`, `'all'`, default is `'all'`
-
-example-1：
-
-```python
-from pyeff.fs import remove, copy
-
-# test remove
-remove('./build')
-assert not os.path.exists('./build')
-
-remove("./build/data_1_copytree_to_be_remove")
-assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
-
-copy("./test/data_1","./build/data_1_copytree_to_be_remove", 
-            dirs_exist_ok=False)
-remove("./build/data_1_copytree_to_be_remove/test.md")
-assert not os.path.exists("./build/data_1_copytree_to_be_remove/test.md")
-assert os.path.exists("./build/data_1_copytree_to_be_remove/test.txt")
+```bash
+pip install pyeff[async]
 ```
 
-example-2
+For development:
 
-```python
-from pyeff.fs import remove, copy
-
-# test remove with incldue mode
-copy("./test/data_1","./build/data_1_copytree_to_be_remove_2", 
-          dirs_exist_ok=False)
-remove("./build/data_1_copytree_to_be_remove_2", 
-        mode="include", 
-        patterns=['*.md'])
-assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.md")
-assert os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
+```bash
+pip install pyeff[dev]
 ```
 
-example-3
+## Quick Start
 
 ```python
-from pyeff.fs import remove, copy
+from pyeff import copy, remove, load_json, dump_yaml
 
-# test remove with ignore mode
-remove("./build/data_1_copytree_to_be_remove_2", 
-        mode="ignore",
-        patterns=['*.md'])
-assert not os.path.exists("./build/data_1_copytree_to_be_remove_2/test.txt")
+# File operations with patterns
+copy("./src", "./backup", mode="ignore", patterns=["*.pyc", "__pycache__"])
+remove("./build", mode="include", patterns=["*.tmp"])
+
+# JSON/YAML
+config = load_json("config.json")
+dump_yaml(config, "config.yml")
 ```
 
-### API: pyeff.fs.copy
+## Modules
 
-* `copy(src, dst, mode='all', patterns=None, dirs_exist_ok=False, follow_symlinks: bool = True, copy_metadata=False)`
-* option mode `'ignore'`, `'include'`, `'all'`, default is `'all'`
-
-example:
+### pyeff.fs - File System Operations
 
 ```python
-from pyeff.fs import remove, copy
+from pyeff.fs import copy, move, remove, search, ensure, listdir, tree
 
-# test copytree ignore
-copy("./test/data_1","./build/data_1_copytree_ignore", 
-            mode='ignore', 
-            patterns=['*.txt'], 
-            dirs_exist_ok=True)
-assert os.path.exists("./build/data_1_copytree_ignore")
-assert os.path.exists("./build/data_1_copytree_ignore/test.md")
-assert not os.path.exists("./build/data_1_copytree_ignore/test.txt")
+# Copy with pattern filtering
+copy("./src", "./dst", mode="include", patterns=["*.py"])
+copy("./src", "./dst", mode="ignore", patterns=["*.pyc", "__pycache__"])
 
-# test copytree include
-copy("./test/data_1","./build/data_1_copytree_include", 
-            mode='include', 
-            patterns=['*.txt'], 
-            dirs_exist_ok=True)
-assert os.path.exists("./build/data_1_copytree_include")
-assert not os.path.exists("./build/data_1_copytree_include/test.md")
-assert os.path.exists("./build/data_1_copytree_include/test.txt")
+# Remove files/directories
+remove("./build")
+remove("./src", mode="include", patterns=["*.tmp"])
+remove(["file1.txt", "file2.txt"])  # Remove multiple
+
+# Move with patterns
+move("./old", "./new", mode="include", patterns=["*.py"])
+
+# Search for files
+py_files = search("./src", mode="include", patterns=["*.py"])
+
+# Directory operations
+ensure("./path/to/dir")  # Create if not exists
+files = listdir("./src", extensions=[".py", ".txt"])
+print(tree("./project", max_depth=2))
 ```
 
-### API: pyeff.fs.move
-
-* `move(src, dst, mode='all', patterns=None)`
-* option modes `'ignore'`, `'include'`, `'all'`, default is `'all'`
-
-example-1:
+### pyeff.json - JSON Operations
 
 ```python
-from pyeff.fs import move
+from pyeff.json import load_json, dump_json, merge
 
-move("./build/data_1_move_source_0/sub_1/test.md","./build/data_1_move/sub_1/test.md")
-assert os.path.exists('./build/data_1_move/sub_1/test.md')
-assert not os.path.exists('./build/data_1_move_source_0/sub_1/test.md')
+# Load and save
+data = load_json("config.json")
+dump_json(data, "output.json", indent=2, sort_keys=True)
 
-move("./build/data_1_move_source_0/sub_2","./build/data_1_move/sub_2")
-assert os.path.exists('./build/data_1_move/sub_2')
-assert os.path.exists('./build/data_1_move/sub_2/test.txt')
-assert os.path.exists('./build/data_1_move/sub_2/test.md')
+# Merge dictionaries
+base = {"a": 1, "b": {"c": 2}}
+update = {"b": {"d": 3}}
+result = merge(base, update)  # {"a": 1, "b": {"c": 2, "d": 3}}
 
-assert not os.path.exists('./build/data_1_move_source_0/sub_2')
-assert not os.path.exists('./build/data_1_move_source_0/sub_2/test.txt')
-assert not os.path.exists('./build/data_1_move_source_0/sub_2/test.md')
+# Async support (requires pyeff[async])
+from pyeff.json import load_json_async, dump_json_async
+data = await load_json_async("config.json")
 ```
 
-example-2
+### pyeff.yaml - YAML Operations
 
 ```python
-from pyeff.fs import move
+from pyeff.yaml import load_yaml, load_yaml_full, dump_yaml
 
-# test move tree ignore
-move("./build/data_1_move_source_1","./build/data_1_move_ignore", 
-        mode='ignore', 
-        patterns=['*.txt'])
-assert os.path.exists("./build/data_1_move_ignore")
+# Simple loading
+data = load_yaml("config.yml")
 
-assert os.path.exists("./build/data_1_move_ignore/test.md")
-assert not os.path.exists("./build/data_1_move_source_1/test.md")
+# Load with !include support
+# config.yml: data: !include other.yml
+data = load_yaml_full("config.yml", base_path="./configs")
 
-assert not os.path.exists("./build/data_1_move_ignore/test.txt")
-assert os.path.exists("./build/data_1_move_source_1/test.txt")
+# Save
+dump_yaml(data, "output.yml")
 
-assert os.path.exists("./build/data_1_move_ignore/sub_1/test.md")
-assert not os.path.exists("./build/data_1_move_source_1/sub_1/test.md")
-
-assert not os.path.exists("./build/data_1_move_ignore/sub_1/test.txt")
-assert os.path.exists("./build/data_1_move_source_1/sub_1/test.txt")
+# Multi-document YAML
+from pyeff.yaml import load_yaml_all, dump_yaml_all
+docs = load_yaml_all("multi.yml")
 ```
 
-example-3:
+### pyeff.lines - Text Line Manipulation
 
 ```python
-from pyeff.fs import move
+from pyeff.lines import load_lines, dump_lines, split, grep, replace, insert
 
-# test move tree include
-move("./build/data_1_move_source_2","./build/data_1_move_include", 
-        mode='include', 
-        patterns=['*.txt'])
+# Load and save lines
+lines = load_lines("file.txt", remove_newline=True)
+dump_lines(lines, "output.txt", append_newline=True)
 
-assert os.path.exists("./build/data_1_move_include/test.txt")
-assert not os.path.exists("./build/data_1_move_source_2/test.txt")
+# Split by pattern
+sections = split(lines, r"^## ")
 
-assert not os.path.exists("./build/data_1_move_include/test.md")
-assert os.path.exists("./build/data_1_move_source_2/test.md")
+# Filter lines
+matches = grep(lines, r"^import")
+non_matches = grep(lines, r"^#", invert=True)
 
-assert os.path.exists("./build/data_1_move_include/sub_1/test.txt")
-assert not os.path.exists("./build/data_1_move_source_2/sub_1/test.txt")
+# Replace in lines
+new_lines = replace(lines, r"old_name", "new_name")
 
-assert not os.path.exists("./build/data_1_move_include/sub_1/test.md")
-assert os.path.exists("./build/data_1_move_source_2/sub_1/test.md")
+# Insert lines
+new_lines = insert(lines, ["# inserted"], patterns=[r"^def "], insert_before=True)
 ```
 
-## module: pyeff.json
+### pyeff.shell - Shell Commands
 
 ```python
-# src/tests/test.py
+from pyeff.shell import run, run_cmds, run_output, which
 
-from pyeff.json import load_json, dump_json
+# Run single command
+result = run("ls -la", capture=True)
+print(result.stdout)
 
-j1 = load_json("./data_2/json/1.json")
-dump_json(j1, "../../build/1.json")
+# Get command output
+output = run_output("git branch --show-current")
 
+# Run multiple commands
+run_cmds(["echo hello", "echo world"])
+run_cmds(["cd /tmp", "ls"], join=True)  # Join with &&
+
+# Check command availability
+if which("docker"):
+    print("Docker is installed")
 ```
 
-## module: pyeff.yaml
+### pyeff.hash - Hashing
 
 ```python
-# src/tests/test.py
+from pyeff.hash import hash_string, hash_file, md5, sha256
 
-from pyeff.yaml import load_yaml_full, load_yaml_safe
+# Hash strings
+digest = hash_string("hello", algorithm="sha256")
+digest = sha256("hello")
+digest = md5("hello")
 
-y = load_yaml_full("./data_2/yaml/0.yml", "./data_2/yaml")
-assert y["name"] == "0"
-assert y["file1"]["name"] == "1"
-assert y["file2"]["name"] == "2"
-
-dump_yaml(y, "../../build/0.full.yml")
-y_full = load_yaml_safe("../../build/0.full.yml")
-assert y_full["name"] == "0"
-assert y_full["file1"]["name"] == "1"
-assert y_full["file2"]["name"] == "2"
-
-y = load_yaml_safe("./data_2/yaml/0.yml")
-assert y["name"] == "0"
-assert y["file1"] == None
-assert y["file2"] == None
-
+# Hash files
+file_hash = hash_file("large_file.bin")
 ```
 
-## module: pyeff.shell
+### pyeff.git - Git Utilities
 
 ```python
-from pyeff.fs import current_dir
-from pyeff.shell import run_cmds
-
-run_cmds(
-    [
-        "cd data_1", 
-        "cat test.txt"
-    ],
-    cwd=current_dir(__file__),
-    tip="test",
-    check=True,
-    join=True,
+from pyeff.git import (
+    get_current_commit_info,
+    get_branch_name,
+    get_commit_hash,
+    is_dirty,
+    is_git_repo,
 )
 
+# Check if in git repo
+if is_git_repo():
+    print(f"Branch: {get_branch_name()}")
+    print(f"Commit: {get_commit_hash(short=True)}")
+    print(f"Dirty: {is_dirty()}")
+
+# Get full commit info
+info = get_current_commit_info()
+print(f"Author: {info['author']}")
+print(f"Message: {info['message']}")
 ```
 
-## module: pyeff.lines
+### pyeff.logger - Structured Logging
 
-* `load_all_text` load all text from file
-* `dump_all_text` dump all text to file
-* `load_lines` load all lines from file, support remove '\n' by remove_new_line option
-* `dump_lines` dump all lines to file, support append '\n' by append_new_lines option
-* `split` load and split lines in to group by regex pattern
+```python
+from pyeff.logger import (
+    logger_section,
+    logger_table_begin,
+    logger_table_end,
+    logger_file_info,
+)
+
+# Log with visual separators
+logger_section("Processing started")
+
+logger_table_begin("Configuration")
+# ... log config items ...
+logger_table_end()
+
+# Log file contents
+logger_file_info("config.json")
+```
+
+## API Reference
+
+### Mode Parameter
+
+Many file operations support a `mode` parameter:
+
+| Mode | Description |
+|------|-------------|
+| `"all"` | Process all files (default) |
+| `"include"` | Only process files matching patterns |
+| `"ignore"` | Process files NOT matching patterns |
+
+### Pattern Syntax
+
+Patterns use glob/fnmatch syntax:
+
+- `*.py` - Match Python files
+- `*.{py,txt}` - Match .py or .txt files
+- `test_*` - Match files starting with test_
+- `**/*.py` - Match .py files in any subdirectory
+
+## Development
+
+```bash
+# Clone repository
+git clone https://github.com/fanfeilong/pyeff.git
+cd pyeff
+
+# Install development dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Run tests with coverage
+pytest --cov=pyeff
+
+# Type checking
+mypy src/pyeff
+
+# Linting
+ruff check src/pyeff
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Author
+
+Fan Fei Long (fanfeilong@gmail.com)
