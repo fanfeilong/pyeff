@@ -170,6 +170,58 @@ digest = md5("hello")
 file_hash = hash_file("large_file.bin")
 ```
 
+### pyeff.archive - Archive Operations (zip/tar)
+
+```python
+from pyeff.archive import compress, extract, list_archive, archive_info
+
+# Compress directory to zip (with pattern filtering)
+compress("./src", "backup.zip")
+compress("./src", "backup.zip", mode="ignore", patterns=["*.pyc", "__pycache__"])
+compress("./docs", "docs.tar.gz", mode="include", patterns=["*.md"])
+
+# Compress specific files
+from pyeff.archive import compress_files
+compress_files(["a.txt", "b.txt"], "files.zip")
+
+# Extract archive
+extract("backup.zip", "./restore")
+extract("data.tar.gz", "./data", mode="include", patterns=["*.csv"])
+
+# Extract single file
+from pyeff.archive import extract_file
+data = extract_file("archive.zip", "config.json")  # Returns bytes
+extract_file("archive.zip", "config.json", "./config.json")  # Write to file
+
+# List archive contents
+members = list_archive("backup.zip")
+for m in members:
+    print(f"{m.name}: {m.size} bytes")
+
+# Filter when listing
+txt_files = list_archive("backup.zip", mode="include", patterns=["*.txt"])
+
+# Get archive info
+info = archive_info("backup.zip")
+print(f"Files: {info['file_count']}, Total: {info['total_size']} bytes")
+
+# Add files to existing zip
+from pyeff.archive import add_to_archive
+add_to_archive("backup.zip", ["new_file.txt"])
+
+# Parallel compression (faster for many small files)
+from pyeff.archive import compress_parallel
+compress_parallel("./src", "backup.zip", workers=4)
+
+# Progress callback
+def on_progress(filename, current, total):
+    print(f"[{current}/{total}] {filename}")
+
+compress("./src", "backup.zip", progress=on_progress)
+```
+
+**Supported formats**: `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`, `.tar.xz`/`.txz`
+
 ### pyeff.git - Git Utilities
 
 ```python
