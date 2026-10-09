@@ -4,15 +4,33 @@ This module provides simplified file system operations including:
 - copy, move, remove with pattern filtering
 - directory operations (ensure, search, listdir)
 - safe operations that prevent accidental deletion of root/home directories
+
+Performance optimizations:
+- Compiled pattern matching with caching
+- Generator-based iteration for memory efficiency
+- Single-pass directory traversal where possible
 """
 
 from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
+from functools import lru_cache
 from pathlib import Path
-from typing import Callable, List, Literal, Optional, Union
+from typing import (
+    Callable,
+    Generator,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 PathLike = Union[str, Path]
 Mode = Literal["all", "ignore", "include"]
@@ -42,19 +60,55 @@ def _validate_mode(mode: str) -> None:
         raise ValueError(f"Invalid mode: {mode!r}. Must be one of {valid_modes}")
 
 
+@lru_cache(maxsize=128)
+def _compile_pattern(pattern: str) -> re.Pattern[str]:
+    """Compile and cache a fnmatch pattern as regex."""
+    return re.compile(fnmatch.translate(pattern))
+
+
 def _is_safe_path(path: PathLike) -> bool:
     """Check if a path is safe to operate on (not root or home directory)."""
     abs_path = os.path.abspath(str(path))
-    unsafe_paths = ["/", os.path.expanduser("~")]
+    unsafe_paths = ("/", os.path.expanduser("~"))
     return abs_path not in unsafe_paths
 
 
 def _ensure_safe_path(path: PathLike, operation: str) -> None:
     """Raise UnsafePathError if path is root or home directory."""
     if not _is_safe_path(path):
-        raise UnsafePathError(
-            f"Cannot {operation} root or home directory: {path}"
-        )
+        raise UnsafePathError(f"Cannot {operation} root or home directory: {path}")
+
+
+class PatternMatcher:
+    """Efficient pattern matching with compiled regex caching."""
+
+    __slots__ = ("_patterns", "_compiled")
+
+    def __init__(self, patterns: Optional[List[str]] = None):
+        self._patterns = patterns or []
+        self._compiled: List[re.Pattern[str]] = [
+            _compile_pattern(p) for p in self._patterns
+        ]
+
+    def match(self, filename: str) -> bool:
+        """Check if filename matches any pattern."""
+        return any(p.match(filename) for p in self._compiled)
+
+    def filter_matching(self, filenames: Iterable[str]) -> Set[str]:
+        """Return set of filenames matching any pattern."""
+        if not self._compiled:
+            return set()
+        return {f for f in filenames if self.match(f)}
+
+    def filter_not_matching(self, filenames: Iterable[str]) -> Iterator[str]:
+        """Yield filenames not matching any pattern."""
+        if not self._compiled:
+            yield from filenames
+        else:
+            matching = self.filter_matching(filenames)
+            for f in filenames:
+                if f not in matching:
+                    yield f
 
 
 def ensure(target_dir: PathLike) -> Path:
@@ -79,10 +133,6 @@ def current_dir(file: PathLike) -> Path:
 
     Returns:
         Path object of the directory containing the file.
-
-    Example:
-        >>> current_dir(__file__)
-        PosixPath('/path/to/current/directory')
     """
     return _to_path(file).resolve().parent
 
@@ -110,69 +160,60 @@ def is_empty_dir(directory: PathLike) -> bool:
         return not any(scan)
 
 
-def _match_files(files: List[str], patterns: List[str]) -> List[str]:
-    """Match files against patterns using fnmatch."""
-    matched = []
-    for pattern in patterns:
-        matched.extend(fnmatch.filter(files, pattern))
-    return list(set(matched))
+def _walk_with_filter(
+    src_path: Path,
+    matcher: PatternMatcher,
+    mode: Mode,
+) -> Generator[Tuple[Path, List[str]], None, None]:
+    """Walk directory and yield (dir_path, filtered_files) tuples.
+    
+    Single-pass traversal with pattern filtering.
+    """
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        
+        if mode == "include":
+            matched = list(matcher.filter_matching(files))
+        elif mode == "ignore":
+            matched = list(matcher.filter_not_matching(files))
+        else:
+            matched = files
+            
+        if matched:
+            yield root_path, matched
 
 
-def _movetree_includes(
-    src: PathLike, dst: PathLike, patterns: List[str]
+def _movetree(
+    src: PathLike, dst: PathLike, mode: Mode, patterns: Optional[List[str]]
 ) -> int:
-    """Move files matching patterns from src to dst."""
+    """Move files based on mode and patterns in single pass."""
     src_path = _to_path(src)
     dst_path = _to_path(dst)
     dst_path.mkdir(parents=True, exist_ok=True)
 
+    matcher = PatternMatcher(patterns)
     moved_count = 0
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
+    empty_dirs: List[Path] = []
+
+    for root_path, files in _walk_with_filter(src_path, matcher, mode):
         rel_path = root_path.relative_to(src_path)
         dest_dir = dst_path / rel_path
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        matched_files = _match_files(files, patterns)
-        for file in matched_files:
+        for file in files:
             src_file = root_path / file
             dst_file = dest_dir / file
             shutil.move(str(src_file), str(dst_file))
             moved_count += 1
 
-        if moved_count > 0 and is_empty_dir(root_path):
-            root_path.rmdir()
+        empty_dirs.append(root_path)
 
-    return moved_count
-
-
-def _movetree_ignores(
-    src: PathLike, dst: PathLike, patterns: Optional[List[str]] = None
-) -> int:
-    """Move files NOT matching patterns from src to dst."""
-    src_path = _to_path(src)
-    dst_path = _to_path(dst)
-    dst_path.mkdir(parents=True, exist_ok=True)
-
-    patterns = patterns or []
-    moved_count = 0
-
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
-        rel_path = root_path.relative_to(src_path)
-        dest_dir = dst_path / rel_path
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        ignored_files = set(_match_files(files, patterns)) if patterns else set()
-        for file in files:
-            if file not in ignored_files:
-                src_file = root_path / file
-                dst_file = dest_dir / file
-                shutil.move(str(src_file), str(dst_file))
-                moved_count += 1
-
-        if moved_count > 0 and is_empty_dir(root_path):
-            root_path.rmdir()
+    for dir_path in reversed(empty_dirs):
+        try:
+            if is_empty_dir(dir_path):
+                dir_path.rmdir()
+        except (FileNotFoundError, OSError):
+            pass
 
     return moved_count
 
@@ -217,21 +258,17 @@ def move(
         shutil.move(str(src_path), str(dst_path))
         return 1
 
-    if mode == "include" and patterns:
-        return _movetree_includes(src, dst, patterns)
-    elif mode == "ignore" and patterns:
-        return _movetree_ignores(src, dst, patterns)
-    else:
-        return _movetree_ignores(src, dst)
+    return _movetree(src, dst, mode, patterns)
 
 
-def _copytree_includes(
+def _copytree(
     src: PathLike,
     dst: PathLike,
-    patterns: List[str],
-    dirs_exist_ok: bool = False,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    dirs_exist_ok: bool,
 ) -> int:
-    """Copy files matching patterns from src to dst."""
+    """Copy files based on mode and patterns in single pass."""
     src_path = _to_path(src)
     dst_path = _to_path(dst)
 
@@ -239,54 +276,19 @@ def _copytree_includes(
         raise FileExistsError(f"Destination already exists: {dst}")
 
     dst_path.mkdir(parents=True, exist_ok=True)
+    matcher = PatternMatcher(patterns)
     copied_count = 0
 
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
+    for root_path, files in _walk_with_filter(src_path, matcher, mode):
         rel_path = root_path.relative_to(src_path)
         dest_dir = dst_path / rel_path
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        matched_files = _match_files(files, patterns)
-        for file in matched_files:
+        for file in files:
             src_file = root_path / file
             dst_file = dest_dir / file
             shutil.copy2(str(src_file), str(dst_file))
             copied_count += 1
-
-    return copied_count
-
-
-def _copytree_ignores(
-    src: PathLike,
-    dst: PathLike,
-    patterns: Optional[List[str]] = None,
-    dirs_exist_ok: bool = False,
-) -> int:
-    """Copy files NOT matching patterns from src to dst."""
-    src_path = _to_path(src)
-    dst_path = _to_path(dst)
-
-    if not dirs_exist_ok and dst_path.exists():
-        raise FileExistsError(f"Destination already exists: {dst}")
-
-    dst_path.mkdir(parents=True, exist_ok=True)
-    patterns = patterns or []
-    copied_count = 0
-
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
-        rel_path = root_path.relative_to(src_path)
-        dest_dir = dst_path / rel_path
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        ignored_files = set(_match_files(files, patterns)) if patterns else set()
-        for file in files:
-            if file not in ignored_files:
-                src_file = root_path / file
-                dst_file = dest_dir / file
-                shutil.copy2(str(src_file), str(dst_file))
-                copied_count += 1
 
     return copied_count
 
@@ -337,43 +339,20 @@ def copy(
             shutil.copy(str(src_path), str(dst_path), follow_symlinks=follow_symlinks)
         return 1
 
-    if mode == "include" and patterns:
-        return _copytree_includes(src, dst, patterns, dirs_exist_ok)
-    elif mode == "ignore" and patterns:
-        return _copytree_ignores(src, dst, patterns, dirs_exist_ok)
-    else:
-        return _copytree_ignores(src, dst, [], dirs_exist_ok)
+    return _copytree(src, dst, mode, patterns, dirs_exist_ok)
 
 
-def _removetree_includes(src: PathLike, patterns: List[str]) -> int:
-    """Remove files matching patterns from src."""
+def _removetree(src: PathLike, mode: Mode, patterns: Optional[List[str]]) -> int:
+    """Remove files based on mode and patterns in single pass."""
     src_path = _to_path(src)
+    matcher = PatternMatcher(patterns)
     removed_count = 0
 
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
-        matched_files = _match_files(files, patterns)
-        for file in matched_files:
+    for root_path, files in _walk_with_filter(src_path, matcher, mode):
+        for file in files:
             file_path = root_path / file
             file_path.unlink()
             removed_count += 1
-
-    return removed_count
-
-
-def _removetree_ignores(src: PathLike, patterns: List[str]) -> int:
-    """Remove files NOT matching patterns from src."""
-    src_path = _to_path(src)
-    removed_count = 0
-
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
-        ignored_files = set(_match_files(files, patterns)) if patterns else set()
-        for file in files:
-            if file not in ignored_files:
-                file_path = root_path / file
-                file_path.unlink()
-                removed_count += 1
 
     return removed_count
 
@@ -429,10 +408,8 @@ def _remove_single(
 
     _ensure_safe_path(src, "remove")
 
-    if mode == "include" and patterns:
-        return _removetree_includes(src, patterns)
-    elif mode == "ignore" and patterns:
-        return _removetree_ignores(src, patterns)
+    if mode in ("include", "ignore") and patterns:
+        return _removetree(src, mode, patterns)
     else:
         if src_path.is_file():
             src_path.unlink()
@@ -441,6 +418,38 @@ def _remove_single(
             count = sum(1 for _ in src_path.rglob("*") if _.is_file())
             shutil.rmtree(str(src_path))
             return count + 1
+
+
+def search_iter(
+    src: PathLike,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+) -> Generator[Path, None, None]:
+    """Search for files in a directory (generator version).
+
+    Memory-efficient generator that yields files one at a time.
+
+    Args:
+        src: Directory to search in.
+        mode: How to apply patterns.
+        patterns: List of glob patterns.
+
+    Yields:
+        Path objects for matching files.
+    """
+    _validate_mode(mode)
+    src_path = _to_path(src)
+
+    if not src_path.exists():
+        raise FileNotFoundError(f"Directory not found: {src}")
+    if not src_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {src}")
+
+    matcher = PatternMatcher(patterns)
+
+    for root_path, files in _walk_with_filter(src_path, matcher, mode):
+        for f in files:
+            yield root_path / f
 
 
 def search(
@@ -466,30 +475,43 @@ def search(
         FileNotFoundError: If source directory doesn't exist.
         NotADirectoryError: If source is not a directory.
     """
-    _validate_mode(mode)
-    src_path = _to_path(src)
+    return list(search_iter(src, mode, patterns))
 
-    if not src_path.exists():
-        raise FileNotFoundError(f"Directory not found: {src}")
-    if not src_path.is_dir():
-        raise NotADirectoryError(f"Not a directory: {src}")
 
-    results: List[Path] = []
-    patterns = patterns or []
+def listdir_iter(
+    source_dir: PathLike,
+    extensions: Optional[List[str]] = None,
+) -> Generator[Path, None, None]:
+    """List files in a directory (generator version).
 
-    for root, dirs, files in os.walk(src_path):
-        root_path = Path(root)
+    Memory-efficient generator for large directories.
 
-        if mode == "include" and patterns:
-            matched = _match_files(files, patterns)
-            results.extend(root_path / f for f in matched)
-        elif mode == "ignore" and patterns:
-            ignored = set(_match_files(files, patterns))
-            results.extend(root_path / f for f in files if f not in ignored)
-        else:
-            results.extend(root_path / f for f in files)
+    Args:
+        source_dir: Directory to list files from.
+        extensions: List of extensions to filter by.
 
-    return results
+    Yields:
+        Path objects for files in the directory.
+    """
+    dir_path = _to_path(source_dir)
+
+    if not dir_path.exists():
+        raise FileNotFoundError(f"Directory not found: {source_dir}")
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {source_dir}")
+
+    if extensions:
+        ext_set = set(extensions)
+        for entry in os.scandir(dir_path):
+            if entry.is_file():
+                path = Path(entry.path)
+                if path.suffix in ext_set or any(
+                    path.name.endswith(ext) for ext in extensions
+                ):
+                    yield path
+    else:
+        for entry in os.scandir(dir_path):
+            yield Path(entry.path)
 
 
 def listdir(
@@ -513,24 +535,13 @@ def listdir(
         FileNotFoundError: If directory doesn't exist.
         NotADirectoryError: If path is not a directory.
     """
-    dir_path = _to_path(source_dir)
-
-    if not dir_path.exists():
-        raise FileNotFoundError(f"Directory not found: {source_dir}")
-    if not dir_path.is_dir():
-        raise NotADirectoryError(f"Not a directory: {source_dir}")
-
-    extensions = extensions or []
-    files = list(dir_path.iterdir())
-
-    if extensions:
-        files = [f for f in files if f.suffix in extensions or f.name.endswith(tuple(extensions))]
+    files = list(listdir_iter(source_dir, extensions))
 
     if abs_path:
         files = [f.resolve() for f in files]
 
     if sort:
-        files = sorted(files)
+        files.sort()
 
     return files
 
@@ -596,12 +607,18 @@ def tree(
     if not root_path.is_dir():
         raise NotADirectoryError(f"Not a directory: {path}")
 
-    def _tree_recursive(dir_path: Path, prefix: str, depth: int) -> List[str]:
-        if max_depth is not None and depth > max_depth:
-            return []
+    lines: List[str] = [str(root_path)]
 
-        lines = []
-        entries = sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+    def _tree_recursive(dir_path: Path, prefix: str, depth: int) -> None:
+        if max_depth is not None and depth > max_depth:
+            return
+
+        try:
+            entries = sorted(
+                os.scandir(dir_path), key=lambda x: (x.is_file(), x.name.lower())
+            )
+        except PermissionError:
+            return
 
         if not show_hidden:
             entries = [e for e in entries if not e.name.startswith(".")]
@@ -613,13 +630,46 @@ def tree(
 
             if entry.is_dir():
                 extension = "    " if is_last else "│   "
-                lines.extend(_tree_recursive(entry, prefix + extension, depth + 1))
+                _tree_recursive(Path(entry.path), prefix + extension, depth + 1)
 
-        return lines
+    _tree_recursive(root_path, "", 0)
+    return "\n".join(lines)
 
-    result = [str(root_path)]
-    result.extend(_tree_recursive(root_path, "", 0))
-    return "\n".join(result)
+
+def walk_iter(
+    path: PathLike,
+    file_filter: Optional[Callable[[Path], bool]] = None,
+    dir_filter: Optional[Callable[[Path], bool]] = None,
+) -> Generator[Path, None, None]:
+    """Walk through a directory tree (generator version).
+
+    Memory-efficient generator for large directory trees.
+
+    Args:
+        path: Root directory to walk.
+        file_filter: Optional function to filter files.
+        dir_filter: Optional function to filter directories.
+
+    Yields:
+        Path objects for matching files.
+    """
+    root_path = _to_path(path)
+
+    if not root_path.exists():
+        raise FileNotFoundError(f"Path not found: {path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {path}")
+
+    for root, dirs, files in os.walk(root_path):
+        root_p = Path(root)
+
+        if dir_filter:
+            dirs[:] = [d for d in dirs if dir_filter(root_p / d)]
+
+        for file in files:
+            file_path = root_p / file
+            if file_filter is None or file_filter(file_path):
+                yield file_path
 
 
 def walk(
@@ -641,24 +691,12 @@ def walk(
         FileNotFoundError: If the path doesn't exist.
         NotADirectoryError: If the path is not a directory.
     """
-    root_path = _to_path(path)
+    return list(walk_iter(path, file_filter, dir_filter))
 
-    if not root_path.exists():
-        raise FileNotFoundError(f"Path not found: {path}")
-    if not root_path.is_dir():
-        raise NotADirectoryError(f"Not a directory: {path}")
 
-    results: List[Path] = []
-
-    for root, dirs, files in os.walk(root_path):
-        root_p = Path(root)
-
-        if dir_filter:
-            dirs[:] = [d for d in dirs if dir_filter(root_p / d)]
-
-        for file in files:
-            file_path = root_p / file
-            if file_filter is None or file_filter(file_path):
-                results.append(file_path)
-
-    return results
+def clear_pattern_cache() -> None:
+    """Clear the compiled pattern cache.
+    
+    Call this if memory usage from cached patterns becomes a concern.
+    """
+    _compile_pattern.cache_clear()
