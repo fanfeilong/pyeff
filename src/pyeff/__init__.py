@@ -29,6 +29,7 @@ from . import shell
 from . import yaml
 
 from .fs import (
+    clear_pattern_cache,
     copy,
     current_dir,
     ensure,
@@ -36,11 +37,14 @@ from .fs import (
     file_size,
     is_empty_dir,
     listdir,
+    listdir_iter,
     move,
     remove,
     search,
+    search_iter,
     tree,
     walk,
+    walk_iter,
     FileOperationError,
     UnsafePathError,
 )
@@ -65,16 +69,20 @@ from .yaml import (
 )
 
 from .lines import (
+    clear_regex_cache,
     dump_all_text,
     dump_lines,
     extract,
     find,
     find_index,
     grep,
+    grep_iter,
     insert,
     load_all_text,
     load_lines,
+    load_lines_iter,
     replace,
+    replace_iter,
     split,
     split_struct,
 )
@@ -156,6 +164,10 @@ __all__ = [
     "search",
     "tree",
     "walk",
+    "walk_iter",
+    "search_iter",
+    "listdir_iter",
+    "clear_pattern_cache",
     "FileOperationError",
     "UnsafePathError",
     "dump_json",
@@ -181,8 +193,12 @@ __all__ = [
     "load_all_text",
     "load_lines",
     "replace",
+    "replace_iter",
     "split",
     "split_struct",
+    "load_lines_iter",
+    "grep_iter",
+    "clear_regex_cache",
     "compress_to_tar_gz",
     "extract_from_tar",
     "is_command_available",

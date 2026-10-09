@@ -5,15 +5,36 @@ This module provides utilities for working with text files line by line:
 - Splitting lines by patterns
 - Structured parsing based on indentation
 - Pattern matching and extraction
+
+Performance optimizations:
+- Compiled regex caching
+- Generator-based iteration for memory efficiency
+- Buffered I/O for large files
 """
 
 from __future__ import annotations
 
+import io
 import re
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Pattern, Tuple, TypedDict, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    Iterable,
+    List,
+    Optional,
+    Pattern,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 PathLike = Union[str, Path]
+
+DEFAULT_BUFFER_SIZE = 8 * 1024 * 1024
 
 
 class Block(TypedDict, total=False):
@@ -31,12 +52,23 @@ def _to_path(p: PathLike) -> Path:
     return Path(p) if not isinstance(p, Path) else p
 
 
-def load_all_text(file_name: PathLike, encoding: str = "utf-8") -> str:
+@lru_cache(maxsize=256)
+def _compile_regex(pattern: str, flags: int = 0) -> Pattern[str]:
+    """Compile and cache a regex pattern."""
+    return re.compile(pattern, flags)
+
+
+def load_all_text(
+    file_name: PathLike,
+    encoding: str = "utf-8",
+    buffer_size: int = DEFAULT_BUFFER_SIZE,
+) -> str:
     """Load and return the entire content of a text file.
 
     Args:
         file_name: Path to the text file.
         encoding: File encoding (default: utf-8).
+        buffer_size: Read buffer size for large files.
 
     Returns:
         The contents of the file as a string.
@@ -48,7 +80,7 @@ def load_all_text(file_name: PathLike, encoding: str = "utf-8") -> str:
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_name}")
 
-    with open(file_path, "r", encoding=encoding) as f:
+    with open(file_path, "r", encoding=encoding, buffering=buffer_size) as f:
         return f.read()
 
 
@@ -56,6 +88,7 @@ def dump_all_text(
     content: str,
     file_name: PathLike,
     encoding: str = "utf-8",
+    buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> None:
     """Write content to a file.
 
@@ -63,12 +96,42 @@ def dump_all_text(
         content: Text content to write.
         file_name: Destination file path.
         encoding: File encoding (default: utf-8).
+        buffer_size: Write buffer size for large files.
     """
     file_path = _to_path(file_name)
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(file_path, "w", encoding=encoding) as f:
+    with open(file_path, "w", encoding=encoding, buffering=buffer_size) as f:
         f.write(content)
+
+
+def load_lines_iter(
+    file_name: PathLike,
+    remove_newline: bool = False,
+    encoding: str = "utf-8",
+) -> Generator[str, None, None]:
+    """Load lines from a text file (generator version).
+
+    Memory-efficient generator for large files.
+
+    Args:
+        file_name: Path to the text file.
+        remove_newline: If True, strip trailing newline.
+        encoding: File encoding.
+
+    Yields:
+        Lines from the file.
+    """
+    file_path = _to_path(file_name)
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_name}")
+
+    with open(file_path, "r", encoding=encoding) as f:
+        for line in f:
+            if remove_newline:
+                yield line.rstrip("\n")
+            else:
+                yield line
 
 
 def load_lines(
@@ -89,41 +152,57 @@ def load_lines(
     Raises:
         FileNotFoundError: If the file does not exist.
     """
-    file_path = _to_path(file_name)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_name}")
-
-    with open(file_path, "r", encoding=encoding) as f:
-        lines = f.readlines()
-
-    if remove_newline:
-        lines = [line.rstrip("\n") for line in lines]
-
-    return lines
+    return list(load_lines_iter(file_name, remove_newline, encoding))
 
 
 def dump_lines(
-    lines: List[str],
+    lines: Iterable[str],
     file_name: PathLike,
     append_newline: bool = False,
     encoding: str = "utf-8",
+    buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> None:
     """Write lines to a file.
 
     Args:
-        lines: List of lines to write.
+        lines: Iterable of lines to write.
         file_name: Destination file path.
         append_newline: If True, append newline to each line.
         encoding: File encoding (default: utf-8).
+        buffer_size: Write buffer size.
     """
     file_path = _to_path(file_name)
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if append_newline:
-        lines = [line + "\n" for line in lines]
+    with open(file_path, "w", encoding=encoding, buffering=buffer_size) as f:
+        if append_newline:
+            for line in lines:
+                f.write(line)
+                f.write("\n")
+        else:
+            f.writelines(lines)
 
-    with open(file_path, "w", encoding=encoding) as f:
-        f.writelines(lines)
+
+class CompiledPatterns:
+    """Efficient compiled pattern matching."""
+
+    __slots__ = ("_patterns",)
+
+    def __init__(self, patterns: Iterable[Union[str, Pattern[str]]]):
+        self._patterns: List[Pattern[str]] = []
+        for p in patterns:
+            if isinstance(p, str):
+                self._patterns.append(_compile_regex(p))
+            else:
+                self._patterns.append(p)
+
+    def match_any(self, text: str) -> bool:
+        """Check if text matches any pattern at start."""
+        return any(p.match(text) for p in self._patterns)
+
+    def search_any(self, text: str) -> bool:
+        """Check if text contains any pattern."""
+        return any(p.search(text) for p in self._patterns)
 
 
 def split(lines: List[str], *patterns: Union[str, Pattern[str]]) -> List[List[str]]:
@@ -142,24 +221,16 @@ def split(lines: List[str], *patterns: Union[str, Pattern[str]]) -> List[List[st
         >>> split(["# Header", "line1", "# Another", "line2"], r"^#.*")
         [['# Header', 'line1'], ['# Another', 'line2']]
     """
-    compiled_patterns: List[Pattern[str]] = []
-    for pattern in patterns:
-        if isinstance(pattern, str):
-            compiled_patterns.append(re.compile(pattern))
-        else:
-            compiled_patterns.append(pattern)
+    if not patterns:
+        return [lines] if lines else []
 
+    compiled = CompiledPatterns(patterns)
     result: List[List[str]] = [[]]
 
     for line in lines:
-        matched = False
-        for pattern in compiled_patterns:
-            if re.match(pattern, line):
-                result.append([line])
-                matched = True
-                break
-
-        if not matched:
+        if compiled.match_any(line):
+            result.append([line])
+        else:
             result[-1].append(line)
 
     return [group for group in result if group]
@@ -184,43 +255,30 @@ def split_struct(
 
     Returns:
         List of top-level blocks with nested body blocks.
-
-    Example:
-        >>> pattern_dict = {
-        ...     "function": {"pattern": r"^def\\s+.*"},
-        ...     "class": {"pattern": r"^class\\s+.*"},
-        ... }
-        >>> def calc_indent(block, pre, cur):
-        ...     return len(block["lines"][0]) - len(block["lines"][0].lstrip())
-        >>> blocks = split_struct(code_lines, pattern_dict, calc_indent)
     """
+    compiled_patterns: Dict[str, CompiledPatterns] = {}
+    for name, item in pattern_dict.items():
+        pattern = item["pattern"]
+        if isinstance(pattern, str):
+            compiled_patterns[name] = CompiledPatterns([pattern])
+        elif isinstance(pattern, list):
+            compiled_patterns[name] = CompiledPatterns(pattern)
+
     current_block: Block = {"name": "top", "pattern": None, "lines": [], "body": []}
     block_stack: List[Block] = [current_block]
 
     for line in lines:
-        for name, item in pattern_dict.items():
-            pattern = item["pattern"]
-            patterns_list: List[str] = []
-
-            if isinstance(pattern, str):
-                patterns_list.append(pattern)
-            elif isinstance(pattern, list):
-                patterns_list.extend(pattern)
-
-            matched = False
-            for p in patterns_list:
-                if re.match(p, line):
-                    current_block = {
-                        "name": name,
-                        "pattern": pattern,
-                        "lines": [],
-                        "body": [],
-                    }
-                    block_stack.append(current_block)
-                    matched = True
-                    break
-
-            if matched:
+        matched = False
+        for name, compiled in compiled_patterns.items():
+            if compiled.match_any(line):
+                current_block = {
+                    "name": name,
+                    "pattern": pattern_dict[name]["pattern"],
+                    "lines": [],
+                    "body": [],
+                }
+                block_stack.append(current_block)
+                matched = True
                 break
 
         current_block["lines"].append(line)
@@ -237,7 +295,7 @@ def split_struct(
     top_blocks: List[Block] = []
 
     while i < len(block_stack):
-        pre_blocks = block_stack[0:i]
+        pre_blocks = block_stack[:i]
         block = block_stack[i]
         block_indent = calc_indent(block, pre_blocks, cur_indent)
         block["indent"] = block_indent
@@ -299,8 +357,6 @@ def split_struct(
 def py_tabspaces(lines: List[str]) -> str:
     """Detect the indentation style used in Python code.
 
-    Examines lines to find the leading whitespace of the first indented line.
-
     Args:
         lines: List of code lines to examine.
 
@@ -313,13 +369,9 @@ def py_tabspaces(lines: List[str]) -> str:
     for line in lines:
         stripped = line.lstrip()
         if stripped:
-            pos = line.find(stripped)
+            pos = len(line) - len(stripped)
             if pos > 0:
-                tab_spaces = []
-                for char in line[:pos]:
-                    if char in (" ", "\t"):
-                        tab_spaces.append(char)
-                return "".join(tab_spaces)
+                return line[:pos]
 
     raise ValueError("No indented lines found.")
 
@@ -343,22 +395,21 @@ def insert(
     Returns:
         Modified list of lines.
     """
+    compiled = CompiledPatterns(patterns)
     new_lines: List[str] = []
 
+    prepared_inserts = insert_lines
+    if append_newline:
+        prepared_inserts = [line + "\n" for line in insert_lines]
+
     for line in source_lines:
-        is_match = any(re.search(pattern, line) for pattern in patterns)
-
-        if is_match:
-            if not insert_before:
-                new_lines.append(line)
-
-            for insert_line in insert_lines:
-                if append_newline:
-                    insert_line = insert_line + "\n"
-                new_lines.append(insert_line)
-
+        if compiled.search_any(line):
             if insert_before:
+                new_lines.extend(prepared_inserts)
                 new_lines.append(line)
+            else:
+                new_lines.append(line)
+                new_lines.extend(prepared_inserts)
         else:
             new_lines.append(line)
 
@@ -375,11 +426,11 @@ def find(lines: List[str], *patterns: str) -> bool:
     Returns:
         True if any line matches any pattern.
     """
-    for line in lines:
-        for pattern in patterns:
-            if re.match(pattern, line):
-                return True
-    return False
+    if not patterns:
+        return False
+
+    compiled = CompiledPatterns(patterns)
+    return any(compiled.match_any(line) for line in lines)
 
 
 def find_index(lines: List[str], *patterns: str) -> int:
@@ -392,11 +443,42 @@ def find_index(lines: List[str], *patterns: str) -> int:
     Returns:
         Index of first matching line, or -1 if not found.
     """
+    if not patterns:
+        return -1
+
+    compiled = CompiledPatterns(patterns)
     for i, line in enumerate(lines):
-        for pattern in patterns:
-            if re.match(pattern, line):
-                return i
+        if compiled.match_any(line):
+            return i
     return -1
+
+
+def grep_iter(
+    lines: Iterable[str],
+    pattern: str,
+    invert: bool = False,
+) -> Generator[str, None, None]:
+    """Filter lines matching a pattern (generator version).
+
+    Memory-efficient generator for large datasets.
+
+    Args:
+        lines: Lines to filter.
+        pattern: Regex pattern to match.
+        invert: If True, yield non-matching lines.
+
+    Yields:
+        Matching (or non-matching) lines.
+    """
+    compiled = _compile_regex(pattern)
+    if invert:
+        for line in lines:
+            if not compiled.search(line):
+                yield line
+    else:
+        for line in lines:
+            if compiled.search(line):
+                yield line
 
 
 def grep(lines: List[str], pattern: str, invert: bool = False) -> List[str]:
@@ -410,10 +492,7 @@ def grep(lines: List[str], pattern: str, invert: bool = False) -> List[str]:
     Returns:
         List of matching (or non-matching) lines.
     """
-    compiled = re.compile(pattern)
-    if invert:
-        return [line for line in lines if not compiled.search(line)]
-    return [line for line in lines if compiled.search(line)]
+    return list(grep_iter(lines, pattern, invert))
 
 
 def replace(
@@ -433,8 +512,30 @@ def replace(
     Returns:
         List of lines with replacements made.
     """
-    compiled = re.compile(pattern)
+    compiled = _compile_regex(pattern)
     return [compiled.sub(replacement, line, count=count) for line in lines]
+
+
+def replace_iter(
+    lines: Iterable[str],
+    pattern: str,
+    replacement: str,
+    count: int = 0,
+) -> Generator[str, None, None]:
+    """Replace pattern matches in lines (generator version).
+
+    Args:
+        lines: Lines to process.
+        pattern: Regex pattern to match.
+        replacement: Replacement string.
+        count: Max replacements per line.
+
+    Yields:
+        Lines with replacements made.
+    """
+    compiled = _compile_regex(pattern)
+    for line in lines:
+        yield compiled.sub(replacement, line, count=count)
 
 
 def pair_match(
@@ -574,3 +675,11 @@ def indent(lines: List[str], prefix: str = "    ") -> List[str]:
         Indented lines.
     """
     return [prefix + line if line.strip() else line for line in lines]
+
+
+def clear_regex_cache() -> None:
+    """Clear the compiled regex cache.
+    
+    Call this if memory usage from cached patterns becomes a concern.
+    """
+    _compile_regex.cache_clear()
