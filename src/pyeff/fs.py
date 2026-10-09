@@ -1,659 +1,664 @@
+"""File system utilities with user-friendly API.
+
+This module provides simplified file system operations including:
+- copy, move, remove with pattern filtering
+- directory operations (ensure, search, listdir)
+- safe operations that prevent accidental deletion of root/home directories
+"""
+
+from __future__ import annotations
+
+import fnmatch
 import os
 import shutil
-import fnmatch
+from pathlib import Path
+from typing import Callable, List, Literal, Optional, Union
+
+PathLike = Union[str, Path]
+Mode = Literal["all", "ignore", "include"]
 
 
-def ensure(target_dir):
-    """
-    Ensure that the specified directory exists. If it does not exist, create it.
-    This function uses `os.makedirs` which creates all necessary parent directories as well.
+class FileOperationError(Exception):
+    """Base exception for file operation errors."""
+
+    pass
+
+
+class UnsafePathError(FileOperationError):
+    """Raised when attempting to operate on protected paths like root or home."""
+
+    pass
+
+
+def _to_path(p: PathLike) -> Path:
+    """Convert string or Path to Path object."""
+    return Path(p) if not isinstance(p, Path) else p
+
+
+def _validate_mode(mode: str) -> None:
+    """Validate mode parameter."""
+    valid_modes = ("ignore", "include", "all")
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode: {mode!r}. Must be one of {valid_modes}")
+
+
+def _is_safe_path(path: PathLike) -> bool:
+    """Check if a path is safe to operate on (not root or home directory)."""
+    abs_path = os.path.abspath(str(path))
+    unsafe_paths = ["/", os.path.expanduser("~")]
+    return abs_path not in unsafe_paths
+
+
+def _ensure_safe_path(path: PathLike, operation: str) -> None:
+    """Raise UnsafePathError if path is root or home directory."""
+    if not _is_safe_path(path):
+        raise UnsafePathError(
+            f"Cannot {operation} root or home directory: {path}"
+        )
+
+
+def ensure(target_dir: PathLike) -> Path:
+    """Ensure that the specified directory exists, creating it if necessary.
 
     Args:
-        target_dir (str): The directory path to ensure existence of.
+        target_dir: The directory path to ensure existence of.
 
     Returns:
-        None
+        Path object of the ensured directory.
     """
-    os.makedirs(target_dir, exist_ok=True)
+    path = _to_path(target_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-def current_dir(file):
-    """
-    Returns the current directory of the given file path.
+def current_dir(file: PathLike) -> Path:
+    """Get the directory containing the given file.
 
-    This function obtains the absolute path of the file provided and then
-    retrieves the directory portion of that path.
-
-    Parameters:
-    file (str): The file path for which the directory is to be found.
+    Args:
+        file: The file path (typically __file__).
 
     Returns:
-    str: The directory path of the given file.
+        Path object of the directory containing the file.
+
+    Example:
+        >>> current_dir(__file__)
+        PosixPath('/path/to/current/directory')
     """
-    return os.path.dirname(os.path.abspath(file))
+    return _to_path(file).resolve().parent
 
 
-def _save_move(src, dst):
-    """
-    Moves a file or directory from a source location to a destination.
-    Ensures the source exists and neither source nor destination are system-level directories.
+def is_empty_dir(directory: PathLike) -> bool:
+    """Check if the specified directory is empty.
 
-    Parameters:
-    src (str): The source file or directory path.
-    dst (str): The destination file or directory path.
+    Args:
+        directory: The path to the directory to check.
 
     Returns:
-    None
+        True if the directory is empty, False otherwise.
 
     Raises:
-    FileNotFoundError: If the source path does not exist.
-    Exception: If attempting to move root or home directories.
-
-    Ensures destination directory exists before moving and handles the moving process securely.
+        NotADirectoryError: If the path is not a directory.
+        FileNotFoundError: If the directory does not exist.
     """
-    if not os.path.exists(src):
-        return
+    path = _to_path(directory)
+    if not path.exists():
+        raise FileNotFoundError(f"Directory not found: {directory}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {directory}")
 
-    if os.path.abspath(src) in ["/", os.path.expanduser("~")] or os.path.abspath(
-        dst
-    ) in ["/", os.path.expanduser("~")]:
-        print("error: You are trying to move your root or home directory.")
-        return
-
-    dst_dir = os.path.dirname(dst)
-    os.makedirs(dst_dir)
-
-    shutil.move(src, dst)
-
-
-def _is_directory_empty(directory):
-    """
-    Check if the specified directory is empty.
-
-    This function uses `os.scandir` to examine the directory's contents.
-    It returns `True` if the directory is empty, meaning it contains no files or directories,
-    and `False` otherwise.
-
-    :param directory: The path to the directory to check.
-    :type directory: str or os.PathLike
-    :return: True if the directory is empty, False otherwise.
-    :rtype: bool
-    """
-    with os.scandir(directory) as scan:
+    with os.scandir(path) as scan:
         return not any(scan)
 
 
-def _movetree_by_os_walk_includes(src, dst, *patterns):
-    """
-    Recursively moves files from source to destination directory based on provided patterns.
-    It ensures that directories are created as needed, matches files using fnmatch, moves them,
-    and optionally removes empty source directories.
+def _match_files(files: List[str], patterns: List[str]) -> List[str]:
+    """Match files against patterns using fnmatch."""
+    matched = []
+    for pattern in patterns:
+        matched.extend(fnmatch.filter(files, pattern))
+    return list(set(matched))
 
-    :param src: Source directory path from which files are to be moved.
-    :param dst: Destination directory path where files will be moved to.
-    :param patterns: Wildcard patterns used to select files to move. Defaults to ["*"], which moves all files.
-    """
-    os.makedirs(dst, exist_ok=True)
 
-    if patterns is None:
-        patterns = ["*"]
+def _movetree_includes(
+    src: PathLike, dst: PathLike, patterns: List[str]
+) -> int:
+    """Move files matching patterns from src to dst."""
+    src_path = _to_path(src)
+    dst_path = _to_path(dst)
+    dst_path.mkdir(parents=True, exist_ok=True)
 
-    for root, dirs, files in os.walk(src):
-        dest_dir = os.path.join(dst, os.path.relpath(root, src))
-        os.makedirs(dest_dir, exist_ok=True)
+    moved_count = 0
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        rel_path = root_path.relative_to(src_path)
+        dest_dir = dst_path / rel_path
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
-        moved = False
+        matched_files = _match_files(files, patterns)
         for file in matched_files:
-            src_file_path = os.path.join(root, file)
-            dest_file_path = os.path.join(dest_dir, file)
-            shutil.move(src_file_path, dest_file_path)
-            moved = True
+            src_file = root_path / file
+            dst_file = dest_dir / file
+            shutil.move(str(src_file), str(dst_file))
+            moved_count += 1
 
-        if moved and _is_directory_empty(root):
-            os.rmdir(root)
+        if moved_count > 0 and is_empty_dir(root_path):
+            root_path.rmdir()
+
+    return moved_count
 
 
-def _movetree_by_os_walk_ignores(src, dst, *patterns):
-    """
-    Recursively moves files from source to destination directory, excluding files
-    that match specified patterns. Empty directories are removed after all their
-    contents have been successfully moved.
+def _movetree_ignores(
+    src: PathLike, dst: PathLike, patterns: Optional[List[str]] = None
+) -> int:
+    """Move files NOT matching patterns from src to dst."""
+    src_path = _to_path(src)
+    dst_path = _to_path(dst)
+    dst_path.mkdir(parents=True, exist_ok=True)
 
-    :param src: The source directory path.
-    :param dst: The destination directory path.
-    :param patterns: A variable number of wildcard patterns to ignore files.
-                      If none provided, all files are considered.
-    """
-    os.makedirs(dst, exist_ok=True)
+    patterns = patterns or []
+    moved_count = 0
 
-    if patterns is None:
-        patterns = []
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        rel_path = root_path.relative_to(src_path)
+        dest_dir = dst_path / rel_path
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-    for root, dirs, files in os.walk(src):
-        dest_dir = os.path.join(dst, os.path.relpath(root, src))
-        os.makedirs(dest_dir, exist_ok=True)
-
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
-        moved = False
+        ignored_files = set(_match_files(files, patterns)) if patterns else set()
         for file in files:
-            if file not in matched_files:
-                src_file_path = os.path.join(root, file)
-                dest_file_path = os.path.join(dest_dir, file)
-                shutil.move(src_file_path, dest_file_path)
-                moved = True
+            if file not in ignored_files:
+                src_file = root_path / file
+                dst_file = dest_dir / file
+                shutil.move(str(src_file), str(dst_file))
+                moved_count += 1
 
-        if moved and _is_directory_empty(root):
-            os.rmdir(root)
+        if moved_count > 0 and is_empty_dir(root_path):
+            root_path.rmdir()
 
-
-def move(src, dst, mode="all", patterns=None):
-    """
-    Moves files or directories from a source to a destination based on a mode and optional patterns.
-
-    :param src: The source path (file or directory) to move.
-    :param dst: The destination path where the source will be moved.
-    :param mode: Specifies the handling of files based on patterns. Options are "ignore", "include", or "all".
-    :param patterns: A list of patterns to include or ignore files, depending on the mode.
-    :raise AssertionError: If the mode is not one of the specified options or if the source path does not exist.
-    :return: None
-    """
-
-    assert mode in ["ignore", "include", "all"]
-
-    assert os.path.exists(src)
-
-    if os.path.isfile(src):
-        _save_move(src, dst)
-    else:
-        if mode == "ignore" and patterns is not None:
-            _movetree_by_os_walk_ignores(src, dst, *patterns)
-        elif mode == "include" and patterns is not None:
-            _movetree_by_os_walk_includes(src, dst, *patterns)
-        else:
-            _movetree_by_os_walk_ignores(src, dst)
+    return moved_count
 
 
-def _copytree_by_shutils_ignores(src, dst, *patterns):
-    """
-    Copies a directory tree from `src` to `dst`, ignoring files and directories
-    that match any of the glob-style patterns provided in `patterns`.
-
-    This function utilizes the `shutil.copytree` method and extends it by creating
-    a custom ignore function which filters out files based on the specified patterns.
+def move(
+    src: PathLike,
+    dst: PathLike,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+) -> int:
+    """Move files or directories from src to dst.
 
     Args:
-        src (str): The source directory to copy from.
-        dst (str): The destination directory where the files will be copied.
-        *patterns (str): Variable length argument list of glob-style patterns to ignore.
+        src: Source path (file or directory).
+        dst: Destination path.
+        mode: How to apply patterns:
+            - "all": Move all files (patterns ignored)
+            - "include": Only move files matching patterns
+            - "ignore": Move files NOT matching patterns
+        patterns: List of glob patterns (e.g., ["*.txt", "*.md"])
+
+    Returns:
+        Number of files moved.
 
     Raises:
-        shutil.Error: If there is an error during the copy process.
+        ValueError: If mode is invalid.
+        FileNotFoundError: If source does not exist.
+        UnsafePathError: If trying to move root or home directory.
     """
+    _validate_mode(mode)
+    src_path = _to_path(src)
 
-    def ignore_patterns(*patterns):
-        def _ignore_patterns(path, names):
-            ignored_names = []
-            for pattern in patterns:
-                ignored_names.extend(fnmatch.filter(names, pattern))
-            return set(ignored_names)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source not found: {src}")
 
-        return _ignore_patterns
+    _ensure_safe_path(src, "move")
+    _ensure_safe_path(dst, "move to")
 
-    shutil.copytree(src, dst, ignore=ignore_patterns(*patterns))
+    if src_path.is_file():
+        dst_path = _to_path(dst)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_path), str(dst_path))
+        return 1
 
-
-def _copytree_by_shutils_includes(src, dst, *patterns):
-    """
-    Recursively copies a directory tree to a new location, including only those files
-    that match the provided filename patterns. Patterns not provided are excluded from the copy.
-
-    :param src: Source directory to copy from.
-    :param dst: Destination directory.
-    :param patterns: Variable number of string patterns to include files; uses fnmatch for matching.
-    """
-
-    def include_patterns(*patterns):
-        def _ignore_patterns(path, names):
-            keepers = set()
-            for pattern in patterns:
-                matched = fnmatch.filter(names, pattern)
-                keepers.update(set(matched))
-            ignore = set(
-                name
-                for name in names
-                if name not in keepers and not os.path.isdir(os.path.join(path, name))
-            )
-            return ignore
-
-        return _ignore_patterns
-
-    shutil.copytree(src, dst, ignore=include_patterns(*patterns))
+    if mode == "include" and patterns:
+        return _movetree_includes(src, dst, patterns)
+    elif mode == "ignore" and patterns:
+        return _movetree_ignores(src, dst, patterns)
+    else:
+        return _movetree_ignores(src, dst)
 
 
-def _copytree_by_os_walk_includes(src, dst, *patterns):
-    """
-    Recursively copies the contents of the source directory to the destination directory,
-    including only files that match the provided patterns. If no patterns are provided,
-    it copies all files. It uses `os.walk` to traverse the source directory and `shutil.copy2`
-    to copy files, creating destination directories as needed.
+def _copytree_includes(
+    src: PathLike,
+    dst: PathLike,
+    patterns: List[str],
+    dirs_exist_ok: bool = False,
+) -> int:
+    """Copy files matching patterns from src to dst."""
+    src_path = _to_path(src)
+    dst_path = _to_path(dst)
 
-    Parameters:
-    - src (str): The source directory path.
-    - dst (str): The destination directory path.
-    - *patterns (str): Variable length argument list of file name patterns to include in the copy.
-                       Wildcards can be used (e.g., "*txt", "image.*").
-    """
-    os.makedirs(dst, exist_ok=True)
+    if not dirs_exist_ok and dst_path.exists():
+        raise FileExistsError(f"Destination already exists: {dst}")
 
-    if patterns is None:
-        patterns = ["*"]
+    dst_path.mkdir(parents=True, exist_ok=True)
+    copied_count = 0
 
-    for root, dirs, files in os.walk(src):
-        dest_dir = os.path.join(dst, os.path.relpath(root, src))
-        os.makedirs(dest_dir, exist_ok=True)
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        rel_path = root_path.relative_to(src_path)
+        dest_dir = dst_path / rel_path
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
+        matched_files = _match_files(files, patterns)
         for file in matched_files:
-            src_file_path = os.path.join(root, file)
-            dest_file_path = os.path.join(dest_dir, file)
-            shutil.copy2(src_file_path, dest_file_path)
+            src_file = root_path / file
+            dst_file = dest_dir / file
+            shutil.copy2(str(src_file), str(dst_file))
+            copied_count += 1
+
+    return copied_count
 
 
-def _copytree_by_os_walk_ignores(src, dst, *patterns):
-    """
-    Recursively copies the content of the source directory to the destination directory,
-    excluding files that match the specified patterns. The function uses `os.walk` to traverse
-    through all subdirectories and files in the source directory.
+def _copytree_ignores(
+    src: PathLike,
+    dst: PathLike,
+    patterns: Optional[List[str]] = None,
+    dirs_exist_ok: bool = False,
+) -> int:
+    """Copy files NOT matching patterns from src to dst."""
+    src_path = _to_path(src)
+    dst_path = _to_path(dst)
 
-    :param src: The source directory path.
-    :param dst: The destination directory path.
-    :param patterns: Optional, a sequence of glob-style patterns specifying files to ignore.
-                    If not specified, no files are ignored.
-    """
-    os.makedirs(dst, exist_ok=True)
+    if not dirs_exist_ok and dst_path.exists():
+        raise FileExistsError(f"Destination already exists: {dst}")
 
-    if patterns is None:
-        patterns = []
+    dst_path.mkdir(parents=True, exist_ok=True)
+    patterns = patterns or []
+    copied_count = 0
 
-    for root, dirs, files in os.walk(src):
-        dest_dir = os.path.join(dst, os.path.relpath(root, src))
-        os.makedirs(dest_dir, exist_ok=True)
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        rel_path = root_path.relative_to(src_path)
+        dest_dir = dst_path / rel_path
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
+        ignored_files = set(_match_files(files, patterns)) if patterns else set()
         for file in files:
-            if not file in matched_files:
-                src_file_path = os.path.join(root, file)
-                dest_file_path = os.path.join(dest_dir, file)
-                shutil.copy2(src_file_path, dest_file_path)
+            if file not in ignored_files:
+                src_file = root_path / file
+                dst_file = dest_dir / file
+                shutil.copy2(str(src_file), str(dst_file))
+                copied_count += 1
 
-
-def _copytree_ignores(src, dst, patterns=None, dirs_exist_ok=False):
-    """
-    Recursively copy a directory tree using copy2(), ignoring files and directories
-    that match any of the patterns provided. This function chooses the copying strategy
-    based on whether or not destination directories are allowed to exist.
-
-    :param src: Source directory path.
-    :param dst: Destination directory path.
-    :param patterns: Optional sequence of patterns specifying files to ignore.
-    :param dirs_exist_ok: If True, destination directories can already exist without raising an error.
-    :return: None
-    """
-    if dirs_exist_ok:
-        _copytree_by_os_walk_ignores(src, dst, *patterns)
-    else:
-        _copytree_by_shutils_ignores(src, dst, *patterns)
-
-
-def _copytree_includes(src, dst, patterns=None, dirs_exist_ok=False):
-    """
-    Recursively copies a directory tree to a destination, including only files
-    that match the given patterns. This function selects the copying mechanism
-    based on whether directories at the destination are allowed to exist.
-
-    :param src: Source directory path.
-    :param dst: Destination directory path.
-    :param patterns: Optional patterns to match files to be copied. Files not matching these patterns are ignored.
-    :param dirs_exist_ok: If True, the operation will not raise an error if directories in the destination already exist.
-    :return: None
-    """
-    if dirs_exist_ok:
-        _copytree_by_os_walk_includes(src, dst, *patterns)
-    else:
-        _copytree_by_shutils_includes(src, dst, *patterns)
-
-
-def _copytree(src, dst, mode="all", patterns=None, dirs_exist_ok=False):
-    """
-    Recursively copies a directory tree from `src` to `dst`.
-
-    Args:
-        src (str): The source directory to copy from.
-        dst (str): The destination directory to copy to.
-        mode (str, optional): Determines copy behavior:
-            - "ignore": Copies only files not matching `patterns`.
-            - "include": Only copies files matching `patterns`.
-            - "all": Copies all files, ignoring `patterns`.
-            Defaults to "all".
-        patterns (list of str, optional): List of patterns to include or exclude based on `mode`.
-        dirs_exist_ok (bool, optional): If True, ignore error if directories in `dst` already exist. Defaults to False.
-
-    Raises:
-        AssertionError: If `mode` is not one of "ignore", "include", or "all".
-    """
-
-    assert mode in ["ignore", "include", "all"]
-
-    if mode == "ignore":
-        _copytree_ignores(src, dst, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
-    elif mode == "include":
-        _copytree_includes(src, dst, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
-    else:
-        _copytree_ignores(src, dst, patterns=[], dirs_exist_ok=dirs_exist_ok)
+    return copied_count
 
 
 def copy(
-    src,
-    dst,
-    mode="all",
-    patterns=None,
-    dirs_exist_ok=False,
+    src: PathLike,
+    dst: PathLike,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+    dirs_exist_ok: bool = False,
     follow_symlinks: bool = True,
-    copy_metadata=False,
-):
-    """
-    Copies a file or directory from the source to the destination.
+    copy_metadata: bool = False,
+) -> int:
+    """Copy a file or directory from src to dst.
 
-    If the source is a file, this function copies it directly to the destination,
-    optionally copying metadata if `copy_metadata` is set to True.
-    If it is a directory, `_copytree` is called to recursively copy its contents,
-    respecting the `mode`, `patterns`, and `dirs_exist_ok` parameters.
+    Args:
+        src: Source path (file or directory).
+        dst: Destination path.
+        mode: How to apply patterns:
+            - "all": Copy all files (patterns ignored)
+            - "include": Only copy files matching patterns
+            - "ignore": Copy files NOT matching patterns
+        patterns: List of glob patterns (e.g., ["*.txt", "*.md"])
+        dirs_exist_ok: If True, don't raise error if dst exists.
+        follow_symlinks: Whether to follow symbolic links.
+        copy_metadata: Whether to copy file metadata (uses copy2 vs copy).
 
-    Parameters:
-    - src (str): The source path.
-    - dst (str): The destination path.
-    - mode (str, optional): Copy mode, not directly used but provided for interface consistency.
-    - patterns (list or None, optional): Patterns to include in the copy if src is a directory.
-    - dirs_exist_ok (bool, optional): If True, destination dirs can already exist.
-    - follow_symlinks (bool, optional): Follow symbolic links when copying.
-    - copy_metadata (bool, optional): Whether to copy file metadata along with the file.
+    Returns:
+        Number of files copied.
+
+    Raises:
+        ValueError: If mode is invalid.
+        FileNotFoundError: If source does not exist.
+        FileExistsError: If dst exists and dirs_exist_ok is False.
     """
-    if os.path.isfile(src):
+    _validate_mode(mode)
+    src_path = _to_path(src)
+
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source not found: {src}")
+
+    if src_path.is_file():
+        dst_path = _to_path(dst)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
         if copy_metadata:
-            shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
+            shutil.copy2(str(src_path), str(dst_path), follow_symlinks=follow_symlinks)
         else:
-            shutil.copy(src, dst, follow_symlinks=follow_symlinks)
+            shutil.copy(str(src_path), str(dst_path), follow_symlinks=follow_symlinks)
+        return 1
+
+    if mode == "include" and patterns:
+        return _copytree_includes(src, dst, patterns, dirs_exist_ok)
+    elif mode == "ignore" and patterns:
+        return _copytree_ignores(src, dst, patterns, dirs_exist_ok)
     else:
-        _copytree(src, dst, mode=mode, patterns=patterns, dirs_exist_ok=dirs_exist_ok)
+        return _copytree_ignores(src, dst, [], dirs_exist_ok)
 
 
-def _removetree_by_os_walk_includes(src, *patterns):
-    """
-    Removes files matching specified patterns from a directory tree starting at `src`.
+def _removetree_includes(src: PathLike, patterns: List[str]) -> int:
+    """Remove files matching patterns from src."""
+    src_path = _to_path(src)
+    removed_count = 0
 
-    This function uses `os.walk` to traverse the directory `src` and `fnmatch` to find files
-    that match any of the given patterns. Each matched file is then deleted.
-
-    Parameters:
-    - src (str): The root directory from where to start removing files.
-    - patterns (*str): Variable number of string patterns that the file names should match to be removed.
-
-    Raises:
-    - AssertionError: If `patterns` is None.
-    - OSError: If there is an error deleting a file.
-    """
-    assert patterns is not None
-
-    for root, dirs, files in os.walk(src):
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        matched_files = _match_files(files, patterns)
         for file in matched_files:
-            src_file_path = os.path.join(root, file)
-            os.remove(src_file_path)
+            file_path = root_path / file
+            file_path.unlink()
+            removed_count += 1
+
+    return removed_count
 
 
-def _removetree_by_os_walk_ignores(src, *patterns):
-    """
-    Removes files from the given directory `src` that do not match any of the
-    specified `patterns` provided. Walks through `src` using `os.walk`, filters
-    out files that do match the patterns, and then removes the remaining files.
+def _removetree_ignores(src: PathLike, patterns: List[str]) -> int:
+    """Remove files NOT matching patterns from src."""
+    src_path = _to_path(src)
+    removed_count = 0
 
-    Parameters:
-    - src (str): The source directory path from which files are to be removed.
-    - *patterns (str): Variable length argument list of patterns to ignore. Files
-                       not matching any of these patterns will be deleted.
-
-    Assumes:
-    - `patterns` is not None, ensuring the function expects at least one pattern.
-    - The user has the necessary permissions to delete files in `src`.
-
-    Examples:
-    _removetree_by_os_walk_ignores("/path/to/directory", "*.log", "*.tmp")
-    """
-    assert patterns is not None
-
-    for root, dirs, files in os.walk(src):
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
+        ignored_files = set(_match_files(files, patterns)) if patterns else set()
         for file in files:
-            if file not in matched_files:
-                src_file_path = os.path.join(root, file)
-                os.remove(src_file_path)
+            if file not in ignored_files:
+                file_path = root_path / file
+                file_path.unlink()
+                removed_count += 1
+
+    return removed_count
 
 
-def _save_remove(path):
-    """
-    Removes a specified file or directory.
-
-    This function checks if the given path exists and is not a root or home directory,
-    then safely deletes it. It distinguishes between files and directories, using
-    `os.remove` for files and `shutil.rmtree` for directories.
-
-    Parameters:
-    - path (str): The file or directory path to be deleted.
-
-    Returns:
-    - None
-
-    Raises:
-    - DoesNotExistError: If the path does not exist.
-    - OSError: If an error occurs during the removal.
-
-    Note:
-    - Attempting to delete the root or home directory will result in an error message.
-    """
-    if not os.path.exists(path):
-        return
-
-    if os.path.abspath(path) in ["/", os.path.expanduser("~")]:
-        print("error: You are trying to delete your root or home directory.")
-        return
-
-    if os.path.isfile(path):
-        os.remove(path)
-    elif os.path.isdir(path):
-        shutil.rmtree(path)
-
-
-def _remove_once(src, mode="all", patterns=None):
-    """
-    Removes files or directories from a source folder based on a specified mode and patterns.
+def remove(
+    src: Union[PathLike, List[PathLike]],
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+    missing_ok: bool = True,
+) -> int:
+    """Remove file(s) or directory.
 
     Args:
-        src (str): The source directory path from which elements are to be removed.
-        mode (str): The operation mode. Options are:
-            - "ignore": Removes all except the specified patterns.
-            - "include": Removes only the specified patterns.
-            - "all": Removes everything without considering patterns.
-        patterns (tuple[str], optional): A tuple of patterns to include or ignore based on the mode.
+        src: Path or list of paths to remove.
+        mode: How to apply patterns:
+            - "all": Remove all files/directory
+            - "include": Only remove files matching patterns
+            - "ignore": Remove files NOT matching patterns
+        patterns: List of glob patterns (e.g., ["*.txt", "*.md"])
+        missing_ok: If True, don't raise error if path doesn't exist.
+
+    Returns:
+        Number of files/directories removed.
 
     Raises:
-        AssertionError: If the mode provided is not one of the specified options.
+        ValueError: If mode is invalid.
+        FileNotFoundError: If path doesn't exist and missing_ok is False.
+        UnsafePathError: If trying to remove root or home directory.
     """
+    _validate_mode(mode)
 
-    assert mode in ["ignore", "include", "all"]
-
-    if mode == "ignore" and patterns is not None:
-        _removetree_by_os_walk_ignores(src, *patterns)
-    elif mode == "include" and patterns is not None:
-        _removetree_by_os_walk_includes(src, *patterns)
-    else:
-        _save_remove(src)
-
-
-def remove(src, mode="all", patterns=None):
-    """
-    Removes elements from a list or a single element based on specified patterns.
-
-    If `src` is a list, iterates over it and applies _remove_once to each element.
-    If it's a single item, applies _remove_once directly.
-
-    Parameters:
-    - src: The source to remove from, can be a list or a single value.
-    - mode (str): The removal mode, defaults to "all". Not used here but implied for further extension.
-    - patterns: Patterns to remove, not implemented directly in this snippet. Expected to be used in _remove_once.
-
-    Note: The functionsignature suggests recursive or iterative processing but the actual pattern removal logic is not provided.
-    """
-    if type(src) == type([]):
+    if isinstance(src, (list, tuple)):
+        total = 0
         for item in src:
-            _remove_once(item, mode, patterns)
+            total += _remove_single(item, mode, patterns, missing_ok)
+        return total
+    return _remove_single(src, mode, patterns, missing_ok)
+
+
+def _remove_single(
+    src: PathLike,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    missing_ok: bool,
+) -> int:
+    """Remove a single file or directory."""
+    src_path = _to_path(src)
+
+    if not src_path.exists():
+        if missing_ok:
+            return 0
+        raise FileNotFoundError(f"Path not found: {src}")
+
+    _ensure_safe_path(src, "remove")
+
+    if mode == "include" and patterns:
+        return _removetree_includes(src, patterns)
+    elif mode == "ignore" and patterns:
+        return _removetree_ignores(src, patterns)
     else:
-        _remove_once(src, mode, patterns)
+        if src_path.is_file():
+            src_path.unlink()
+            return 1
+        else:
+            count = sum(1 for _ in src_path.rglob("*") if _.is_file())
+            shutil.rmtree(str(src_path))
+            return count + 1
 
 
-def _search_by_os_walk_includes(src, results, *patterns):
-    """
-    Recursively searches for files in a directory tree that match any of the given patterns.
-
-    This function uses `os.walk` to traverse the directory `src` and `fnmatch.filter` to find files
-    that match the patterns provided. If no patterns are provided, it defaults to matching all files (`*`).
-    The file paths of the matched files are then added to the `results` list.
+def search(
+    src: PathLike,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+) -> List[Path]:
+    """Search for files in a directory.
 
     Args:
-    - src (str): The root directory to start the search from.
-    - results (list): A list to append the matched file paths to.
-    - patterns (*str): Variable number of string patterns used to filter files. Defaults to ['*'] if not provided.
+        src: Directory to search in.
+        mode: How to apply patterns:
+            - "all": Return all files
+            - "include": Only return files matching patterns
+            - "ignore": Return files NOT matching patterns
+        patterns: List of glob patterns (e.g., ["*.txt", "*.md"])
 
     Returns:
-    - None: The function modifies the `results` list in place.
+        List of Path objects for matching files.
+
+    Raises:
+        ValueError: If mode is invalid.
+        FileNotFoundError: If source directory doesn't exist.
+        NotADirectoryError: If source is not a directory.
     """
-    if patterns is None:
-        patterns = ["*"]
+    _validate_mode(mode)
+    src_path = _to_path(src)
 
-    for root, dirs, files in os.walk(src):
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
+    if not src_path.exists():
+        raise FileNotFoundError(f"Directory not found: {src}")
+    if not src_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {src}")
 
-        for file in matched_files:
-            src_file_path = os.path.join(root, file)
-            results.append((src_file_path))
+    results: List[Path] = []
+    patterns = patterns or []
 
+    for root, dirs, files in os.walk(src_path):
+        root_path = Path(root)
 
-def _search_by_os_walk_ignores(src, results, *patterns):
-    """
-    This function searches for files within a directory tree starting from `src`,
-    excluding any files that match the patterns provided in `patterns`.
-
-    It uses `os.walk` to traverse the directory tree and `fnmatch.filter` to match
-    the file names against the given glob patterns. Files not matching any of the
-    patterns are added to the `results` list.
-
-    Parameters:
-    - src (str): The source directory to start the search.
-    - results (list): A list to store the paths of files that do not match the ignore patterns.
-    - *patterns (str): Variable length argument list of glob patterns to exclude files.
-
-    Note:
-    If no patterns are provided, it defaults to an empty list, effectively including all files.
-    """
-    if patterns is None:
-        patterns = []
-
-    for root, dirs, files in os.walk(src):
-        matched_files = []
-        for pattern in patterns:
-            matched_files.extend(fnmatch.filter(files, pattern))
-
-        for file in files:
-            if file not in matched_files:
-                src_file_path = os.path.join(root, file)
-                results.append((src_file_path))
-
-
-def search(src, mode="all", patterns=None):
-    """
-    Recursively searches through a directory (`src`) based on the specified search `mode`
-    and optional `patterns`.
-
-    - `mode` can be "ignore", "include", or "all":
-        - "ignore": Ignores files matching the given patterns.
-        - "include": Only includes files matching the given patterns.
-        - "all": Does not filter by patterns, including all files.
-    - `patterns` is a tuple of file name patterns to include or ignore, depending on `mode`.
-
-    :param src: The source directory path to search.
-    :param mode: The search mode determining how patterns are applied.
-    :param patterns: Optional tuple of file patterns for inclusion or exclusion.
-    :return: A list of files that match the search criteria.
-    """
-    results = []
-
-    assert mode in ["ignore", "include", "all"]
-
-    if mode == "ignore" and patterns is not None:
-        _search_by_os_walk_ignores(src, results, *patterns)
-    elif mode == "include" and patterns is not None:
-        _search_by_os_walk_includes(src, results, *patterns)
-    else:
-        _search_by_os_walk_ignores(src, results)
+        if mode == "include" and patterns:
+            matched = _match_files(files, patterns)
+            results.extend(root_path / f for f in matched)
+        elif mode == "ignore" and patterns:
+            ignored = set(_match_files(files, patterns))
+            results.extend(root_path / f for f in files if f not in ignored)
+        else:
+            results.extend(root_path / f for f in files)
 
     return results
 
 
-def listdir(source_dir, extensions=[], sort=True, abs_path=True):
-    """
-    Returns a list of files in the specified directory, optionally filtered by file extensions,
-    sorted, and with absolute paths.
+def listdir(
+    source_dir: PathLike,
+    extensions: Optional[List[str]] = None,
+    sort: bool = True,
+    abs_path: bool = True,
+) -> List[Path]:
+    """List files in a directory.
 
-    Parameters:
-    - source_dir (str): The directory path to list files from.
-    - extensions (list of str, optional): A list of file extensions to filter by. Defaults to an empty list, which includes all files.
-    - sort (bool, optional): Whether to sort the list of files alphabetically. Defaults to True.
-    - abs_path (bool, optional): Whether to return the full absolute paths of the files. Defaults to True.
+    Args:
+        source_dir: Directory to list files from.
+        extensions: List of extensions to filter by (e.g., [".txt", ".md"]).
+        sort: Whether to sort the results alphabetically.
+        abs_path: Whether to return absolute paths.
 
     Returns:
-    - list of str: A list of file names or paths, filtered and processed according to the given parameters.
-    """
-    file_list = os.listdir(source_dir)
+        List of Path objects for files in the directory.
 
-    if len(extensions) > 0:
-        file_list = [
-            file for file in file_list if any(file.endswith(ext) for ext in extensions)
-        ]
+    Raises:
+        FileNotFoundError: If directory doesn't exist.
+        NotADirectoryError: If path is not a directory.
+    """
+    dir_path = _to_path(source_dir)
+
+    if not dir_path.exists():
+        raise FileNotFoundError(f"Directory not found: {source_dir}")
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {source_dir}")
+
+    extensions = extensions or []
+    files = list(dir_path.iterdir())
+
+    if extensions:
+        files = [f for f in files if f.suffix in extensions or f.name.endswith(tuple(extensions))]
 
     if abs_path:
-        file_list = [os.path.join(source_dir, file) for file in file_list]
+        files = [f.resolve() for f in files]
 
     if sort:
-        file_list = sorted(file_list)
+        files = sorted(files)
 
-    return file_list
+    return files
+
+
+def exists(path: PathLike) -> bool:
+    """Check if a path exists.
+
+    Args:
+        path: Path to check.
+
+    Returns:
+        True if the path exists, False otherwise.
+    """
+    return _to_path(path).exists()
+
+
+def file_size(path: PathLike) -> int:
+    """Get the size of a file in bytes.
+
+    Args:
+        path: Path to the file.
+
+    Returns:
+        Size of the file in bytes.
+
+    Raises:
+        FileNotFoundError: If the file doesn't exist.
+        IsADirectoryError: If the path is a directory.
+    """
+    file_path = _to_path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    if file_path.is_dir():
+        raise IsADirectoryError(f"Path is a directory: {path}")
+    return file_path.stat().st_size
+
+
+def tree(
+    path: PathLike,
+    max_depth: Optional[int] = None,
+    show_hidden: bool = False,
+    prefix: str = "",
+) -> str:
+    """Generate a tree representation of a directory structure.
+
+    Args:
+        path: Root directory path.
+        max_depth: Maximum depth to traverse (None for unlimited).
+        show_hidden: Whether to show hidden files (starting with .).
+        prefix: Internal use for recursive formatting.
+
+    Returns:
+        String representation of the directory tree.
+
+    Raises:
+        FileNotFoundError: If the path doesn't exist.
+        NotADirectoryError: If the path is not a directory.
+    """
+    root_path = _to_path(path)
+
+    if not root_path.exists():
+        raise FileNotFoundError(f"Path not found: {path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {path}")
+
+    def _tree_recursive(dir_path: Path, prefix: str, depth: int) -> List[str]:
+        if max_depth is not None and depth > max_depth:
+            return []
+
+        lines = []
+        entries = sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+
+        if not show_hidden:
+            entries = [e for e in entries if not e.name.startswith(".")]
+
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{entry.name}")
+
+            if entry.is_dir():
+                extension = "    " if is_last else "│   "
+                lines.extend(_tree_recursive(entry, prefix + extension, depth + 1))
+
+        return lines
+
+    result = [str(root_path)]
+    result.extend(_tree_recursive(root_path, "", 0))
+    return "\n".join(result)
+
+
+def walk(
+    path: PathLike,
+    file_filter: Optional[Callable[[Path], bool]] = None,
+    dir_filter: Optional[Callable[[Path], bool]] = None,
+) -> List[Path]:
+    """Walk through a directory tree and return all matching files.
+
+    Args:
+        path: Root directory to walk.
+        file_filter: Optional function to filter files (returns True to include).
+        dir_filter: Optional function to filter directories (returns True to descend).
+
+    Returns:
+        List of Path objects for all matching files.
+
+    Raises:
+        FileNotFoundError: If the path doesn't exist.
+        NotADirectoryError: If the path is not a directory.
+    """
+    root_path = _to_path(path)
+
+    if not root_path.exists():
+        raise FileNotFoundError(f"Path not found: {path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {path}")
+
+    results: List[Path] = []
+
+    for root, dirs, files in os.walk(root_path):
+        root_p = Path(root)
+
+        if dir_filter:
+            dirs[:] = [d for d in dirs if dir_filter(root_p / d)]
+
+        for file in files:
+            file_path = root_p / file
+            if file_filter is None or file_filter(file_path):
+                results.append(file_path)
+
+    return results

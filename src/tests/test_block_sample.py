@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 var = 100
 
@@ -31,7 +32,7 @@ async def vvv():
 
 
 class B(object):
-    def __call__(self, *args: os.Any, **kwds: os.Any) -> os.Any:
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
         pass
 
     async def run(self, config, options):

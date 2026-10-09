@@ -1,143 +1,214 @@
-import os
+"""Text line manipulation utilities.
+
+This module provides utilities for working with text files line by line:
+- Loading and saving lines
+- Splitting lines by patterns
+- Structured parsing based on indentation
+- Pattern matching and extraction
+"""
+
+from __future__ import annotations
+
 import re
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Pattern, Tuple, TypedDict, Union
+
+PathLike = Union[str, Path]
 
 
-def load_all_text(file_name):
-    """
-    Load and return the entire content of a text file.
+class Block(TypedDict, total=False):
+    """Represents a parsed block of code/text."""
+
+    name: str
+    pattern: Optional[str]
+    lines: List[str]
+    body: List["Block"]
+    indent: int
+
+
+def _to_path(p: PathLike) -> Path:
+    """Convert string or Path to Path object."""
+    return Path(p) if not isinstance(p, Path) else p
+
+
+def load_all_text(file_name: PathLike, encoding: str = "utf-8") -> str:
+    """Load and return the entire content of a text file.
 
     Args:
-        file_name (str): The path to the text file to be read.
+        file_name: Path to the text file.
+        encoding: File encoding (default: utf-8).
 
     Returns:
-        str: The contents of the file as a single string.
+        The contents of the file as a string.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
     """
-    with open(file_name, "r") as f:
+    file_path = _to_path(file_name)
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_name}")
+
+    with open(file_path, "r", encoding=encoding) as f:
         return f.read()
 
 
-def dump_all_text(content, file_name):
-    """
-    Write the entire content to a specified file.
+def dump_all_text(
+    content: str,
+    file_name: PathLike,
+    encoding: str = "utf-8",
+) -> None:
+    """Write content to a file.
 
     Args:
-        content (str): The text content to be written to the file.
-        file_name (str): The name of the file to which the content will be written.
+        content: Text content to write.
+        file_name: Destination file path.
+        encoding: File encoding (default: utf-8).
     """
-    with open(file_name, "w") as f:
+    file_path = _to_path(file_name)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(file_path, "w", encoding=encoding) as f:
         f.write(content)
 
 
-def load_lines(file_name, remove_new_line=False):
-    """
-    This function reads a text file and loads its content into a list of lines.
+def load_lines(
+    file_name: PathLike,
+    remove_newline: bool = False,
+    encoding: str = "utf-8",
+) -> List[str]:
+    """Load lines from a text file.
 
     Args:
-        file_name (str): The name or path of the file to be read.
-        remove_new_line (bool, optional): A flag indicating whether to remove newline characters from the end of each line. Defaults to False.
+        file_name: Path to the text file.
+        remove_newline: If True, strip trailing newline from each line.
+        encoding: File encoding (default: utf-8).
 
     Returns:
-        list[str]: A list containing the lines of the file. If remove_new_line is True, newline characters are stripped from each line's end.
+        List of lines from the file.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
     """
-    with open(file_name, "r") as f:
+    file_path = _to_path(file_name)
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_name}")
+
+    with open(file_path, "r", encoding=encoding) as f:
         lines = f.readlines()
 
-    if remove_new_line:
-        lines = [l.strip("\n") for l in lines]
+    if remove_newline:
+        lines = [line.rstrip("\n") for line in lines]
 
     return lines
 
 
-def dump_lines(lines, file_name, append_new_lines=False):
-    """
-    Write a list of strings to a file, with an option to append newlines.
+def dump_lines(
+    lines: List[str],
+    file_name: PathLike,
+    append_newline: bool = False,
+    encoding: str = "utf-8",
+) -> None:
+    """Write lines to a file.
 
     Args:
-        lines (list of str): The list of strings to be written to the file.
-        file_name (str): The name of the file to write to.
-        append_new_lines (bool, optional): If True, appends a newline character to each string in the list. Defaults to False.
-
+        lines: List of lines to write.
+        file_name: Destination file path.
+        append_newline: If True, append newline to each line.
+        encoding: File encoding (default: utf-8).
     """
-    if append_new_lines:
-        lines = [l + "\n" for l in lines]
+    file_path = _to_path(file_name)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(file_name, "w") as f:
+    if append_newline:
+        lines = [line + "\n" for line in lines]
+
+    with open(file_path, "w", encoding=encoding) as f:
         f.writelines(lines)
 
 
-def split(lines, *patterns):
-    """
-    Splits a list of strings ('lines') into sublists based on matching patterns.
-    Patterns can be either string regex patterns or pre-compiled regex objects.
+def split(lines: List[str], *patterns: Union[str, Pattern[str]]) -> List[List[str]]:
+    """Split lines into groups based on pattern matches.
+
+    Lines matching any pattern start a new group.
 
     Args:
-    - lines: A list of strings to be split.
-    - *patterns: Variable length argument list, where each argument can be a string regex or a regex pattern object.
-
-    The function compiles string patterns into regex objects and then iterates through each line.
-    If a line matches any of the patterns, it starts a new sublist in the result.
-    All non-matching lines are appended to the current sublist.
+        lines: List of lines to split.
+        patterns: Regex patterns (strings or compiled patterns).
 
     Returns:
-    A list of sublists, where each sublist contains lines that don't match any following patterns
-    from the start of the line.
+        List of line groups.
+
+    Example:
+        >>> split(["# Header", "line1", "# Another", "line2"], r"^#.*")
+        [['# Header', 'line1'], ['# Another', 'line2']]
     """
-    all_patterns = []
+    compiled_patterns: List[Pattern[str]] = []
     for pattern in patterns:
         if isinstance(pattern, str):
-            all_patterns.append(re.compile(pattern))
+            compiled_patterns.append(re.compile(pattern))
         else:
-            all_patterns.extend(pattern)
+            compiled_patterns.append(pattern)
 
-    result = [[]]
+    result: List[List[str]] = [[]]
 
     for line in lines:
-        for pattern in all_patterns:
+        matched = False
+        for pattern in compiled_patterns:
             if re.match(pattern, line):
-                result.append([])
-                result[-1].append(line)
+                result.append([line])
+                matched = True
                 break
-        else:
+
+        if not matched:
             result[-1].append(line)
 
-    return [lines for lines in result if lines]
+    return [group for group in result if group]
 
 
-def split_struct(lines, pattern_dict, calc_indent):
-    """
-    Parse a list of lines into structured blocks based on patterns and indentation.
-    
-    This function iterates through each line of input, identifying blocks that match
-    patterns defined in `pattern_dict`. It organizes these blocks hierarchically 
-    according to their indentation level, calculated by `calc_indent` function.
-    
+def split_struct(
+    lines: List[str],
+    pattern_dict: Dict[str, Dict[str, Any]],
+    calc_indent: Callable[[Block, List[Block], int], int],
+) -> List[Block]:
+    """Parse lines into structured blocks based on patterns and indentation.
+
+    This function parses text into a hierarchical structure based on
+    pattern matching and indentation levels.
+
     Args:
-    - lines (list of str): The input lines of text to be parsed.
-    - pattern_dict (dict): A dictionary where keys are block names and values are
-      patterns (either a string or a list of strings) used to match block start.
-    - calc_indent (function): A function that takes a block and preceding blocks
-      to calculate the indentation level of the block.
-      
+        lines: Lines to parse.
+        pattern_dict: Dictionary mapping block names to pattern specs.
+            Each spec has a "pattern" key with string or list of patterns.
+        calc_indent: Function to calculate block indentation.
+            Takes (block, preceding_blocks, current_indent) -> indent level.
+
     Returns:
-    - list of dict: A list of block dictionaries, each representing a structured block
-      with details like 'name', 'pattern', 'lines', 'body', and calculated 'indent'.
+        List of top-level blocks with nested body blocks.
+
+    Example:
+        >>> pattern_dict = {
+        ...     "function": {"pattern": r"^def\\s+.*"},
+        ...     "class": {"pattern": r"^class\\s+.*"},
+        ... }
+        >>> def calc_indent(block, pre, cur):
+        ...     return len(block["lines"][0]) - len(block["lines"][0].lstrip())
+        >>> blocks = split_struct(code_lines, pattern_dict, calc_indent)
     """
-    current_block = {"name": "top", "pattern": None, "lines": [], "body": []}
-    block_stack = [current_block]
+    current_block: Block = {"name": "top", "pattern": None, "lines": [], "body": []}
+    block_stack: List[Block] = [current_block]
 
-    # parse blocks
     for line in lines:
-        for name in pattern_dict:
-            item = pattern_dict[name]
+        for name, item in pattern_dict.items():
             pattern = item["pattern"]
-            patterns = []
-            if type(pattern) == type(""):
-                patterns.append(pattern)
-            elif type(pattern) == type([]):
-                patterns.extend(pattern)
+            patterns_list: List[str] = []
 
-            has_match = False
-            for p in patterns:
+            if isinstance(pattern, str):
+                patterns_list.append(pattern)
+            elif isinstance(pattern, list):
+                patterns_list.extend(pattern)
+
+            matched = False
+            for p in patterns_list:
                 if re.match(p, line):
                     current_block = {
                         "name": name,
@@ -146,26 +217,27 @@ def split_struct(lines, pattern_dict, calc_indent):
                         "body": [],
                     }
                     block_stack.append(current_block)
-                    has_match = True
+                    matched = True
                     break
-            if has_match:
+
+            if matched:
                 break
+
         current_block["lines"].append(line)
 
-    # chain blocks by indent
     i = 0
     cur_indent = 0
     cur_depth = 0
-    indent_depth_map = {}
-    pre_indent_last_block_stack = []
-    pre_indent_last_block = None
-    cur_indent_last_block = None
+    indent_depth_map: Dict[int, int] = {}
+    pre_indent_last_block_stack: List[Optional[Block]] = []
+    pre_indent_last_block: Optional[Block] = None
+    cur_indent_last_block: Optional[Block] = None
 
-    top_indent = None
-    top_blocks = []
+    top_indent: Optional[int] = None
+    top_blocks: List[Block] = []
+
     while i < len(block_stack):
         pre_blocks = block_stack[0:i]
-
         block = block_stack[i]
         block_indent = calc_indent(block, pre_blocks, cur_indent)
         block["indent"] = block_indent
@@ -181,31 +253,27 @@ def split_struct(lines, pattern_dict, calc_indent):
             cur_indent = block_indent
 
         if block_indent > cur_indent:
-            # indent step
             if pre_indent_last_block:
                 pre_indent_last_block["body"].append(block)
-            else:
+            elif cur_indent_last_block:
                 cur_indent_last_block["body"].append(block)
 
-            # cur_indent_last_block is the new pre indent last block
             pre_indent_last_block_stack.append(pre_indent_last_block)
             pre_indent_last_block = cur_indent_last_block
             cur_indent_last_block = block
 
             cur_depth += 1
             indent_depth_map[block_indent] = cur_depth
+
         elif block_indent < cur_indent:
-            # indent back
-            target_depth = indent_depth_map[block_indent]
+            target_depth = indent_depth_map.get(block_indent, 0)
             offset = cur_depth - target_depth
-            k = 0
-            while k < offset:
-                pre_indent_last_block = (
-                    pre_indent_last_block_stack.pop()
-                    if len(pre_indent_last_block_stack) > 0
-                    else None
-                )
-                k += 1
+
+            for _ in range(offset):
+                if pre_indent_last_block_stack:
+                    pre_indent_last_block = pre_indent_last_block_stack.pop()
+                else:
+                    pre_indent_last_block = None
                 cur_depth -= 1
 
             cur_indent_last_block = block
@@ -213,16 +281,14 @@ def split_struct(lines, pattern_dict, calc_indent):
             if pre_indent_last_block:
                 pre_indent_last_block["body"].append(block)
         else:
-            # indent keep
             cur_indent_last_block = block
 
             if pre_indent_last_block:
                 pre_indent_last_block["body"].append(block)
 
-        # update cur indent
         cur_indent = block_indent
 
-        if block_indent == top_indent:
+        if top_indent is not None and block_indent == top_indent:
             top_blocks.append(block)
 
         i += 1
@@ -230,199 +296,281 @@ def split_struct(lines, pattern_dict, calc_indent):
     return top_blocks
 
 
-def py_tabspaces(lines):
-    """
-    This function examines a list of strings (`lines`) to identify the leading whitespace
-    (spaces and tabs) of the first non-empty line. It returns a string representing this
-    indentation, composed of either spaces or tabs. If no indented lines are found, it raises
-    a ValueError.
+def py_tabspaces(lines: List[str]) -> str:
+    """Detect the indentation style used in Python code.
+
+    Examines lines to find the leading whitespace of the first indented line.
 
     Args:
-        lines (list[str]): A list of strings representing lines of code or text.
+        lines: List of code lines to examine.
 
     Returns:
-        str: The whitespace indentation of the first non-empty line.
+        String representing the indentation (spaces or tabs).
 
     Raises:
-        ValueError: If the provided list does not contain any indented lines.
+        ValueError: If no indented lines are found.
     """
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+    for line in lines:
         stripped = line.lstrip()
         if stripped:
             pos = line.find(stripped)
-            if pos >= 0:
+            if pos > 0:
                 tab_spaces = []
-                for i in range(0, pos):
-                    if line[i] == " ":
-                        tab_spaces.append(" ")
-                    elif line[i] == "\t":
-                        tab_spaces.append("\t")
+                for char in line[:pos]:
+                    if char in (" ", "\t"):
+                        tab_spaces.append(char)
                 return "".join(tab_spaces)
-        i += 1
 
     raise ValueError("No indented lines found.")
 
 
 def insert(
-    source_lines,
-    insert_lines,
-    patterns=None,
-    append_new_line=False,
-    insert_before=False,
-):
-    """
-    Modifies a list of source code lines by inserting new lines before or after lines that match given regex patterns.
+    source_lines: List[str],
+    insert_lines: List[str],
+    patterns: List[str],
+    append_newline: bool = False,
+    insert_before: bool = False,
+) -> List[str]:
+    """Insert lines before or after lines matching patterns.
 
-    :param source_lines: List of strings representing the source code.
-    :param insert_lines: Lines to insert into the source code.
-    :param patterns: List of regex patterns used to identify lines where insertion should occur.
-    :param append_new_line: Boolean indicating whether to append a newline to each inserted line.
-    :param insert_before: Boolean to control insertion position (before or after the matching line).
-    :return: A new list of source code lines with the insertions applied, or the original list if no changes were made.
+    Args:
+        source_lines: Original lines.
+        insert_lines: Lines to insert.
+        patterns: Regex patterns to match.
+        append_newline: If True, append newline to inserted lines.
+        insert_before: If True, insert before match; otherwise after.
+
+    Returns:
+        Modified list of lines.
     """
-    has_changed = False
-    new_lines = []
+    new_lines: List[str] = []
 
     for line in source_lines:
+        is_match = any(re.search(pattern, line) for pattern in patterns)
 
-        is_match = False
-        for pattern in patterns:
-            match_obj = re.search(pattern, line)
-            if match_obj:
-                is_match = True
-                break
         if is_match:
             if not insert_before:
                 new_lines.append(line)
+
             for insert_line in insert_lines:
-                if append_new_line:
+                if append_newline:
                     insert_line = insert_line + "\n"
                 new_lines.append(insert_line)
+
             if insert_before:
                 new_lines.append(line)
-            has_changed = True
         else:
             new_lines.append(line)
 
-    return new_lines if has_changed else source_lines
+    return new_lines
 
 
-def find(lines, *patterns):
-    """
-    Search for any of the given patterns in the provided lines of text.
+def find(lines: List[str], *patterns: str) -> bool:
+    """Check if any line matches any of the given patterns.
 
-    This function iterates over each line in the 'lines' iterable and checks
-    if it matches any of the regex patterns provided in 'patterns' using
-    Python's `re.match`. If a match is found, it immediately returns True.
-    If no matches are found after checking all lines and patterns, it returns False.
-
-    Parameters:
-    - lines (iterable of str): The lines of text to search through.
-    - patterns (str): Variable number of regex patterns to search for.
+    Args:
+        lines: Lines to search.
+        patterns: Regex patterns to match.
 
     Returns:
-    - bool: True if any pattern matches a line, False otherwise.
+        True if any line matches any pattern.
     """
-    for l in lines:
+    for line in lines:
         for pattern in patterns:
-            if re.match(pattern, l):
+            if re.match(pattern, line):
                 return True
     return False
 
 
-def pair_match(lines, first, second):
-    """
-    Check if there exists a pair of consecutive elements in 'lines'
-    where 'first' condition is true for the first element and 'second' condition is true for the second element.
+def find_index(lines: List[str], *patterns: str) -> int:
+    """Find the index of the first line matching any pattern.
 
     Args:
-    lines (list): A list of elements to be checked.
-    first (function): A function that takes an element from 'lines' and returns a boolean.
-    second (function): A function that also takes an element from 'lines' and returns a boolean.
+        lines: Lines to search.
+        patterns: Regex patterns to match.
 
     Returns:
-    tuple: A tuple (bool, int) where bool indicates if a matching pair was found, and int is the index of the first element of the pair.
-           If no pair is found, returns (False, 0).
+        Index of first matching line, or -1 if not found.
     """
-    i = 0
-    while i < len(lines) and (i + 1) < len(lines):
+    for i, line in enumerate(lines):
+        for pattern in patterns:
+            if re.match(pattern, line):
+                return i
+    return -1
+
+
+def grep(lines: List[str], pattern: str, invert: bool = False) -> List[str]:
+    """Filter lines matching a pattern.
+
+    Args:
+        lines: Lines to filter.
+        pattern: Regex pattern to match.
+        invert: If True, return non-matching lines.
+
+    Returns:
+        List of matching (or non-matching) lines.
+    """
+    compiled = re.compile(pattern)
+    if invert:
+        return [line for line in lines if not compiled.search(line)]
+    return [line for line in lines if compiled.search(line)]
+
+
+def replace(
+    lines: List[str],
+    pattern: str,
+    replacement: str,
+    count: int = 0,
+) -> List[str]:
+    """Replace pattern matches in lines.
+
+    Args:
+        lines: Lines to process.
+        pattern: Regex pattern to match.
+        replacement: Replacement string.
+        count: Max replacements per line (0 for all).
+
+    Returns:
+        List of lines with replacements made.
+    """
+    compiled = re.compile(pattern)
+    return [compiled.sub(replacement, line, count=count) for line in lines]
+
+
+def pair_match(
+    lines: List[str],
+    first: Callable[[str], bool],
+    second: Callable[[str], bool],
+) -> Tuple[bool, int]:
+    """Find a pair of consecutive lines where first matches one and second matches next.
+
+    Args:
+        lines: Lines to search.
+        first: Predicate for first line.
+        second: Predicate for second line.
+
+    Returns:
+        Tuple of (found, index of second line).
+    """
+    for i in range(len(lines) - 1):
         if first(lines[i]) and second(lines[i]):
             return True, i
 
         if first(lines[i]) and second(lines[i + 1]):
             return True, i + 1
 
-        i += 1
     return False, 0
 
 
-def continue_match(lines, first, second):
-    """
-    Checks a sequence of lines to find if there's an occurrence where `first` condition is met,
-    immediately followed by another occurrence where `second` condition is met at exact next line.
+def continue_match(
+    lines: List[str],
+    first: Callable[[str], bool],
+    second: Callable[[str], bool],
+) -> Tuple[bool, int]:
+    """Find where first condition is met, followed eventually by second.
 
     Args:
-        lines (list): A list of strings, representing lines of text to be examined.
-        first (function): A function that takes a string and returns a boolean indicating if the condition is met.
-        second (function): A function similar to `first`, but for the subsequent condition.
+        lines: Lines to search.
+        first: Predicate for start condition.
+        second: Predicate for end condition.
 
     Returns:
-        tuple: A tuple (bool, int) where the bool indicates if the pattern was found, and int is the index of the last matched line.
-               If not found, returns (False, 0).
+        Tuple of (found, index of line matching second).
     """
-    i = 0
     match_count = 0
 
-    while i < len(lines):
-        l = lines[i]
-        if first(l):
+    for i, line in enumerate(lines):
+        if first(line):
             match_count += 1
 
-        if second(l):
+        if second(line):
             if match_count == 1:
                 return True, i
-            else:
-                match_count = 0
+            match_count = 0
 
-        i += 1
     return False, 0
 
 
-def extract(lines, start, finish):
-    """
-    Extracts lines from a list 'lines' starting from the line where the 'start' function returns True
-    until the line where the 'finish' function returns True, inclusive of the lines where these conditions are met.
+def extract(
+    lines: List[str],
+    start: Callable[[str], bool],
+    finish: Callable[[str], bool],
+) -> Tuple[List[str], int]:
+    """Extract lines from start condition to finish condition.
 
     Args:
-        lines (list of str): The list of lines to be processed.
-        start (function): A function that takes a string (line) and returns a boolean, indicating the start condition.
-        finish (function): A function that takes a string (line) and returns a boolean, indicating the finish condition.
+        lines: Lines to extract from.
+        start: Predicate for start line.
+        finish: Predicate for end line.
 
     Returns:
-        tuple: A tuple containing two elements:
-            - list of str: The extracted lines meeting the criteria.
-            - int: The index after the last extracted line in the 'lines' list.
+        Tuple of (extracted lines, end index).
     """
-    results = []
-    j = 0
+    results: List[str] = []
     enter = False
+    j = 0
 
     while j < len(lines):
-        l = lines[j]
-
+        line = lines[j]
         is_enter = False
-        if not enter and start(l):
+
+        if not enter and start(line):
             enter = True
             is_enter = True
 
         if enter:
-            results.append(l)
+            results.append(line)
 
-        if not is_enter and enter and finish(l):
+        if not is_enter and enter and finish(line):
             break
 
         j += 1
 
     return results, j
+
+
+def count_indent(line: str) -> int:
+    """Count the leading whitespace characters in a line.
+
+    Args:
+        line: Line to analyze.
+
+    Returns:
+        Number of leading whitespace characters.
+    """
+    return len(line) - len(line.lstrip())
+
+
+def dedent(lines: List[str], spaces: Optional[int] = None) -> List[str]:
+    """Remove common leading whitespace from lines.
+
+    Args:
+        lines: Lines to dedent.
+        spaces: Number of spaces to remove (None for auto-detect).
+
+    Returns:
+        Dedented lines.
+    """
+    if not lines:
+        return lines
+
+    if spaces is None:
+        non_empty = [line for line in lines if line.strip()]
+        if not non_empty:
+            return lines
+        spaces = min(count_indent(line) for line in non_empty)
+
+    return [line[spaces:] if len(line) > spaces else line for line in lines]
+
+
+def indent(lines: List[str], prefix: str = "    ") -> List[str]:
+    """Add indentation to lines.
+
+    Args:
+        lines: Lines to indent.
+        prefix: String to prepend to each line.
+
+    Returns:
+        Indented lines.
+    """
+    return [prefix + line if line.strip() else line for line in lines]
