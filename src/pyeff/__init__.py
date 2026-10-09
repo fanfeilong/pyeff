@@ -18,6 +18,7 @@ __version__ = "0.2.0"
 __author__ = "Fan Fei Long"
 __email__ = "fanfeilong@gmail.com"
 
+from . import archive
 from . import fs
 from . import git
 from . import hash
@@ -95,6 +96,21 @@ from .shell import (
     run_cmds,
     run_output,
     which,
+)
+
+from .archive import (
+    add_to_archive,
+    archive_info,
+    compress,
+    compress_files,
+    compress_parallel,
+    extract,
+    extract_file,
+    is_archive,
+    list_archive,
+    list_archive_iter,
+    ArchiveError,
+    ArchiveInfo,
 )
 
 from .logger import (
@@ -206,6 +222,19 @@ __all__ = [
     "run_cmds",
     "run_output",
     "which",
+    "archive",
+    "add_to_archive",
+    "archive_info",
+    "compress",
+    "compress_files",
+    "compress_parallel",
+    "extract",
+    "extract_file",
+    "is_archive",
+    "list_archive",
+    "list_archive_iter",
+    "ArchiveError",
+    "ArchiveInfo",
     "logger_blank",
     "logger_dict",
     "logger_file_info",
