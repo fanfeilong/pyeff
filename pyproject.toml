@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 async = ["aiofiles>=23.0.0"]
+ssh = ["paramiko>=3.0.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -45,8 +46,9 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.1.0",
     "aiofiles>=23.0.0",
+    "paramiko>=3.0.0",
 ]
-all = ["pyeff[async,dev]"]
+all = ["pyeff[async,ssh,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/fanfeilong/pyeff"

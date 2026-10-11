@@ -1,7 +1,10 @@
 """pyeff - User-friendly Python utilities for daily coding tasks.
 
 This library provides simplified APIs for common operations:
-- fs: File system operations (copy, move, remove, search)
+- fs / local: File system operations (copy, move, remove, search)
+- archive: Archive operations (compress/pack, extract/unpack)
+- remote: Remote operations (docker, ssh)
+- uri: URI-based paths for unified operations
 - json: JSON file reading and writing
 - yaml: YAML file handling with include support
 - lines: Text line manipulation and parsing
@@ -10,6 +13,22 @@ This library provides simplified APIs for common operations:
 - hash: String and file hashing
 - git: Git repository utilities
 - indent: Indentation detection and manipulation
+
+Unified copy() with URI Paths:
+    >>> from pyeff import copy
+    >>> from pyeff.uri import local, docker, ssh, archive
+    >>> 
+    >>> # URI strings
+    >>> copy("local:./src", "local:./dst")
+    >>> copy("docker:my-container:/logs", "local:./logs")
+    >>> copy("local:./data", "archive:./backup.zip")
+    >>> copy("ssh:user@host:/var/log", "local:./logs")
+    >>> 
+    >>> # Path builders (with options)
+    >>> copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
+    >>> 
+    >>> # Mixed
+    >>> copy("local:./config", docker("my-container", "/app/config"))
 """
 
 from __future__ import annotations
@@ -18,7 +37,12 @@ __version__ = "0.2.0"
 __author__ = "Fan Fei Long"
 __email__ = "fanfeilong@gmail.com"
 
+from . import archive
 from . import fs
+from . import local
+from . import ops
+from . import remote
+from . import uri
 from . import git
 from . import hash
 from . import indent
@@ -28,19 +52,37 @@ from . import logger
 from . import shell
 from . import yaml
 
-from .fs import (
+# Unified operations (URI-based) - these are the primary APIs
+from .ops import (
     copy,
-    current_dir,
-    ensure,
-    exists,
-    file_size,
-    is_empty_dir,
-    listdir,
-    move,
     remove,
     search,
+    exists,
+    listdir,
+    read,
+    write,
+    move,
+    FileInfo,
+    OperationError,
+    CopyError,
+    RemoveError,
+    SearchError,
+    ReadError,
+    WriteError,
+)
+
+# Additional fs operations (also available via fs module)
+from .fs import (
+    clear_pattern_cache,
+    current_dir,
+    ensure,
+    file_size,
+    is_empty_dir,
+    listdir_iter,
+    search_iter,
     tree,
     walk,
+    walk_iter,
     FileOperationError,
     UnsafePathError,
 )
@@ -65,16 +107,20 @@ from .yaml import (
 )
 
 from .lines import (
+    clear_regex_cache,
     dump_all_text,
     dump_lines,
     extract,
     find,
     find_index,
     grep,
+    grep_iter,
     insert,
     load_all_text,
     load_lines,
+    load_lines_iter,
     replace,
+    replace_iter,
     split,
     split_struct,
 )
@@ -87,6 +133,26 @@ from .shell import (
     run_cmds,
     run_output,
     which,
+)
+
+from .archive import (
+    add_to_archive,
+    archive_info,
+    compress,
+    compress_files,
+    compress_parallel,
+    extract,
+    extract_file,
+    is_archive,
+    list_archive,
+    list_archive_iter,
+    pack,
+    pack_files,
+    pack_parallel,
+    unpack,
+    unpack_file,
+    ArchiveError,
+    ArchiveInfo,
 )
 
 from .logger import (
@@ -135,27 +201,48 @@ __all__ = [
     "__version__",
     "__author__",
     "__email__",
+    # Modules
+    "archive",
     "fs",
     "git",
     "hash",
     "indent",
     "json",
     "lines",
+    "local",
     "logger",
+    "ops",
+    "remote",
     "shell",
+    "uri",
     "yaml",
+    # Unified operations (URI-based)
     "copy",
-    "current_dir",
-    "ensure",
-    "exists",
-    "file_size",
-    "is_empty_dir",
-    "listdir",
-    "move",
     "remove",
     "search",
+    "exists",
+    "listdir",
+    "read",
+    "write",
+    "move",
+    "FileInfo",
+    "OperationError",
+    "CopyError",
+    "RemoveError",
+    "SearchError",
+    "ReadError",
+    "WriteError",
+    # Additional fs exports
+    "current_dir",
+    "ensure",
+    "file_size",
+    "is_empty_dir",
     "tree",
     "walk",
+    "walk_iter",
+    "search_iter",
+    "listdir_iter",
+    "clear_pattern_cache",
     "FileOperationError",
     "UnsafePathError",
     "dump_json",
@@ -181,8 +268,12 @@ __all__ = [
     "load_all_text",
     "load_lines",
     "replace",
+    "replace_iter",
     "split",
     "split_struct",
+    "load_lines_iter",
+    "grep_iter",
+    "clear_regex_cache",
     "compress_to_tar_gz",
     "extract_from_tar",
     "is_command_available",
@@ -190,6 +281,24 @@ __all__ = [
     "run_cmds",
     "run_output",
     "which",
+    # archive exports
+    "add_to_archive",
+    "archive_info",
+    "compress",
+    "compress_files",
+    "compress_parallel",
+    "extract",
+    "extract_file",
+    "is_archive",
+    "list_archive",
+    "list_archive_iter",
+    "pack",
+    "pack_files",
+    "pack_parallel",
+    "unpack",
+    "unpack_file",
+    "ArchiveError",
+    "ArchiveInfo",
     "logger_blank",
     "logger_dict",
     "logger_file_info",
