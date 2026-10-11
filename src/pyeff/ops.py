@@ -39,6 +39,10 @@ from .uri import (
     DockerPath,
     SSHPath,
     K8sPath,
+    S3Path,
+    GCSPath,
+    AzurePath,
+    HTTPPath,
     ArchivePath,
     resolve_path,
 )
@@ -152,29 +156,53 @@ def _get_copy_handler(src: URIPath, dst: URIPath):
     """Get the appropriate copy handler for source and destination types."""
     key = (src.scheme, dst.scheme)
     
+    # Object-store / HTTP schemes that use _copy_via_temp for cross-backend
+    _TEMP = _copy_via_temp
+    _OBJ = ("s3", "gs", "az", "http", "https")
+    
     handlers = {
         ("local", "local"): _copy_local_to_local,
         ("local", "docker"): _copy_local_to_docker,
         ("local", "ssh"): _copy_local_to_ssh,
         ("local", "k8s"): _copy_local_to_k8s,
+        ("local", "s3"): _copy_local_to_s3,
+        ("local", "gs"): _copy_local_to_gs,
+        ("local", "az"): _copy_local_to_az,
+        ("local", "http"): _copy_local_to_http,
+        ("local", "https"): _copy_local_to_http,
         ("local", "archive"): _copy_local_to_archive,
         ("docker", "local"): _copy_docker_to_local,
         ("docker", "docker"): _copy_docker_to_docker,
         ("docker", "ssh"): _copy_docker_to_ssh,
-        ("docker", "k8s"): _copy_via_temp,
+        ("docker", "k8s"): _TEMP,
         ("ssh", "local"): _copy_ssh_to_local,
         ("ssh", "docker"): _copy_ssh_to_docker,
         ("ssh", "ssh"): _copy_ssh_to_ssh,
-        ("ssh", "k8s"): _copy_via_temp,
+        ("ssh", "k8s"): _TEMP,
         ("k8s", "local"): _copy_k8s_to_local,
-        ("k8s", "docker"): _copy_via_temp,
-        ("k8s", "ssh"): _copy_via_temp,
-        ("k8s", "k8s"): _copy_via_temp,
+        ("k8s", "docker"): _TEMP,
+        ("k8s", "ssh"): _TEMP,
+        ("k8s", "k8s"): _TEMP,
+        ("s3", "local"): _copy_s3_to_local,
+        ("gs", "local"): _copy_gs_to_local,
+        ("az", "local"): _copy_az_to_local,
+        ("http", "local"): _copy_http_to_local,
+        ("https", "local"): _copy_http_to_local,
         ("archive", "local"): _copy_archive_to_local,
         ("archive", "docker"): _copy_archive_to_docker,
         ("archive", "ssh"): _copy_archive_to_ssh,
         ("archive", "k8s"): _copy_archive_to_k8s,
     }
+    
+    # Cross-backend via temp for remotes + object stores
+    remotes = ("docker", "ssh", "k8s", "s3", "gs", "az", "http", "https")
+    for a in remotes:
+        for b in remotes:
+            if (a, b) not in handlers:
+                handlers[(a, b)] = _TEMP
+    for obj in _OBJ:
+        if ("archive", obj) not in handlers:
+            handlers[("archive", obj)] = _copy_archive_via_temp
     
     handler = handlers.get(key)
     if handler is None:
@@ -246,6 +274,69 @@ def _copy_local_to_k8s(
         return k.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
 
 
+def _copy_local_to_s3(
+    src: LocalPath,
+    dst: S3Path,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to S3."""
+    from .remote.s3 import S3Remote
+    
+    with S3Remote(**dst.get_connection_params()) as client:
+        return client.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_local_to_gs(
+    src: LocalPath,
+    dst: GCSPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to GCS."""
+    from .remote.gcs import GCSRemote
+    
+    with GCSRemote(**dst.get_connection_params()) as client:
+        return client.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_local_to_az(
+    src: LocalPath,
+    dst: AzurePath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to Azure Blob."""
+    from .remote.azure import AzureRemote
+    
+    with AzureRemote(**dst.get_connection_params()) as client:
+        return client.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_local_to_http(
+    src: LocalPath,
+    dst: HTTPPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Upload local file via HTTP PUT."""
+    from .remote.http import HTTPRemote
+    
+    with HTTPRemote(**dst.get_connection_params()) as client:
+        return client.copy_to(
+            src.path, dst.get_url_path(),
+            mode=mode, patterns=patterns, progress=progress,
+        )
+
+
 def _copy_local_to_archive(
     src: LocalPath,
     dst: ArchivePath,
@@ -277,8 +368,27 @@ def _open_remote(path: URIPath):
     elif isinstance(path, K8sPath):
         from .remote.k8s import K8sRemote
         return K8sRemote(**path.get_connection_params())
+    elif isinstance(path, S3Path):
+        from .remote.s3 import S3Remote
+        return S3Remote(**path.get_connection_params())
+    elif isinstance(path, GCSPath):
+        from .remote.gcs import GCSRemote
+        return GCSRemote(**path.get_connection_params())
+    elif isinstance(path, AzurePath):
+        from .remote.azure import AzureRemote
+        return AzureRemote(**path.get_connection_params())
+    elif isinstance(path, HTTPPath):
+        from .remote.http import HTTPRemote
+        return HTTPRemote(**path.get_connection_params())
     else:
         raise CopyError(f"Not a remote path: {path.scheme}")
+
+
+def _remote_path_arg(path: URIPath) -> str:
+    """Get the path argument for remote backend operations."""
+    if isinstance(path, HTTPPath):
+        return path.get_url_path()
+    return path.path
 
 
 def _copy_via_temp(
@@ -294,11 +404,35 @@ def _copy_via_temp(
     
     with tempfile.TemporaryDirectory() as temp_dir:
         with _open_remote(src) as src_remote:
-            src_remote.copy_from(src.path, temp_dir, mode=mode, patterns=patterns)
+            src_remote.copy_from(
+                _remote_path_arg(src), temp_dir, mode=mode, patterns=patterns
+            )
         
         with _open_remote(dst) as dst_remote:
             return dst_remote.copy_to(
-                temp_dir, dst.path, mode=mode, patterns=patterns, progress=progress
+                temp_dir, _remote_path_arg(dst),
+                mode=mode, patterns=patterns, progress=progress,
+            )
+
+
+def _copy_archive_via_temp(
+    src: ArchivePath,
+    dst: URIPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Extract archive then copy to remote."""
+    import tempfile
+    from .archive import extract
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract(src.archive_path, temp_dir, mode=mode, patterns=patterns, overwrite=True)
+        with _open_remote(dst) as dst_remote:
+            return dst_remote.copy_to(
+                temp_dir, _remote_path_arg(dst),
+                mode=mode, patterns=patterns, progress=progress,
             )
 
 
@@ -432,6 +566,69 @@ def _copy_k8s_to_local(
         return k.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
 
 
+def _copy_s3_to_local(
+    src: S3Path,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy S3 to local."""
+    from .remote.s3 import S3Remote
+    
+    with S3Remote(**src.get_connection_params()) as client:
+        return client.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_gs_to_local(
+    src: GCSPath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy GCS to local."""
+    from .remote.gcs import GCSRemote
+    
+    with GCSRemote(**src.get_connection_params()) as client:
+        return client.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_az_to_local(
+    src: AzurePath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy Azure Blob to local."""
+    from .remote.azure import AzureRemote
+    
+    with AzureRemote(**src.get_connection_params()) as client:
+        return client.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_http_to_local(
+    src: HTTPPath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Download HTTP(S) URL to local."""
+    from .remote.http import HTTPRemote
+    
+    with HTTPRemote(**src.get_connection_params()) as client:
+        return client.copy_from(
+            src.get_url_path(), dst.path,
+            mode=mode, patterns=patterns, progress=progress,
+        )
+
+
 # Archive operations
 
 def _copy_archive_to_local(
@@ -563,6 +760,13 @@ def remove(
         with K8sRemote(**params) as k:
             return k.remove(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+        with _open_remote(uri_path) as client:
+            return client.remove(
+                _remote_path_arg(uri_path),
+                mode=mode, patterns=patterns, recursive=recursive,
+            )
+    
     elif isinstance(uri_path, ArchivePath):
         raise RemoveError("Cannot remove from archive directly")
     
@@ -615,6 +819,13 @@ def search(
         with K8sRemote(**params) as k:
             return k.search(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+        with _open_remote(uri_path) as client:
+            return client.search(
+                _remote_path_arg(uri_path),
+                mode=mode, patterns=patterns, recursive=recursive,
+            )
+    
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
         members = list_archive(uri_path.archive_path, mode=mode, patterns=patterns)
@@ -659,6 +870,10 @@ def exists(path: Union[str, URIPath]) -> bool:
         params = uri_path.get_connection_params()
         with K8sRemote(**params) as k:
             return k.exists(uri_path.path)
+    
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+        with _open_remote(uri_path) as client:
+            return client.exists(_remote_path_arg(uri_path))
     
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
@@ -740,6 +955,19 @@ def listdir(
                 is_dir=i.is_dir, is_file=i.is_file
             ) for i in items]
     
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath)):
+        with _open_remote(uri_path) as client:
+            items = client.listdir(
+                _remote_path_arg(uri_path), mode=mode, patterns=patterns
+            )
+            return [FileInfo(
+                name=i.name, path=i.path, size=i.size,
+                is_dir=i.is_dir, is_file=i.is_file
+            ) for i in items]
+    
+    elif isinstance(uri_path, HTTPPath):
+        raise OperationError("listdir is not supported for HTTP URLs")
+    
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
         members = list_archive(uri_path.archive_path, mode=mode, patterns=patterns)
@@ -803,6 +1031,12 @@ def read(
             if binary:
                 return k.read_bytes(uri_path.path)
             return k.read_text(uri_path.path, encoding=encoding)
+    
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+        with _open_remote(uri_path) as client:
+            if binary:
+                return client.read_bytes(_remote_path_arg(uri_path))
+            return client.read_text(_remote_path_arg(uri_path), encoding=encoding)
     
     elif isinstance(uri_path, ArchivePath):
         from .archive import extract_file
@@ -869,6 +1103,13 @@ def write(
                 k.write_bytes(uri_path.path, content)
             else:
                 k.write_text(uri_path.path, content, encoding=encoding)
+    
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+        with _open_remote(uri_path) as client:
+            if isinstance(content, bytes):
+                client.write_bytes(_remote_path_arg(uri_path), content)
+            else:
+                client.write_text(_remote_path_arg(uri_path), content, encoding=encoding)
     
     elif isinstance(uri_path, ArchivePath):
         raise WriteError("Cannot write to archive directly. Use copy() to create archives.")

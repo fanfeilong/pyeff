@@ -44,7 +44,7 @@ pyeff provides **unified operations** that work across all backends using URI-st
 
 ```python
 from pyeff import copy, remove, search, exists, read, write, move, listdir
-from pyeff.uri import local, docker, ssh, k8s, archive
+from pyeff.uri import local, docker, ssh, k8s, s3, gs, az, archive
 
 # Copy
 copy("local:./src", "local:./dst")
@@ -87,6 +87,20 @@ copy(k8s("my-pod", "/data", namespace="prod"), local("./backup"))
 copy("k8s:prod/my-pod:/app/logs", "local:./logs")
 copy("local:./config", "k8s:prod/my-pod/app:/app/config")
 remove("k8s:my-pod:/tmp/cache")
+
+# S3 / MinIO (pip install pyeff[s3])
+copy("s3://my-bucket/logs/", "local:./logs")
+copy("local:./data.csv", "s3://my-bucket/uploads/data.csv")
+copy(s3("bucket", "data/", endpoint_url="http://localhost:9000",
+        access_key="minio", secret_key="minio123"), local("./data"))
+
+# GCS / Azure (pip install pyeff[gcs] / pyeff[azure])
+copy("gs://my-bucket/data/", "local:./data")
+copy("az://my-container/logs/", "local:./logs")
+
+# HTTP(S) download (stdlib, no extra deps)
+copy("https://example.com/file.zip", "local:./file.zip")
+content = read("https://example.com/api/data.json")
 ```
 
 ### URI Format
@@ -100,6 +114,10 @@ remove("k8s:my-pod:/tmp/cache")
 | K8s | `k8s:pod:/path` | `k8s:my-pod:/app/logs` |
 | K8s (ns) | `k8s:ns/pod:/path` | `k8s:prod/my-pod:/app/logs` |
 | K8s (container) | `k8s:ns/pod/ctr:/path` | `k8s:prod/my-pod/app:/var/log` |
+| S3 / MinIO | `s3://bucket/key` | `s3://my-bucket/logs/` |
+| GCS | `gs://bucket/path` | `gs://my-bucket/data/` |
+| Azure Blob | `az://container/blob` | `az://my-container/logs/` |
+| HTTP(S) | `https://host/path` | `https://example.com/file.zip` |
 | Archive | `archive:./path.zip` | `archive:./backup.tar.gz` |
 | Archive (inner) | `archive:./path.zip:/inner` | `archive:./data.zip:/config.json` |
 
@@ -108,13 +126,15 @@ remove("k8s:my-pod:/tmp/cache")
 | Operation | Description | Supported Backends |
 |-----------|-------------|-------------------|
 | `copy(src, dst)` | Copy files | all |
-| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s |
-| `search(path)` | Search files | local, docker, ssh, k8s, archive |
+| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s, s3, gs, az, http |
+| `search(path)` | Search files | local, docker, ssh, k8s, s3, gs, az, archive |
 | `exists(path)` | Check existence | all |
-| `listdir(path)` | List directory | local, docker, ssh, k8s, archive |
+| `listdir(path)` | List directory | local, docker, ssh, k8s, s3, gs, az, archive |
 | `read(path)` | Read file content | all |
-| `write(path, content)` | Write file content | local, docker, ssh, k8s |
+| `write(path, content)` | Write file content | local, docker, ssh, k8s, s3, gs, az, http |
 | `move(src, dst)` | Move files | all (cross-backend via copy+remove) |
+
+Optional installs: `pip install pyeff[s3]`, `pyeff[gcs]`, `pyeff[azure]`, or `pyeff[cloud]` for all object stores.
 
 ## Quick Start
 

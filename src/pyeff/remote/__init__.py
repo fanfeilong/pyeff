@@ -1,27 +1,21 @@
 """Remote file operations module.
 
-This module provides unified API for remote file operations:
-- Docker containers via docker() factory
-- SSH/SFTP remote hosts via ssh() factory
-- Kubernetes pods via k8s() factory
-
-All operations use the same mode/patterns API as local fs operations.
+Backends:
+- Docker containers via docker()
+- SSH/SFTP via ssh()
+- Kubernetes pods via k8s()
+- S3 / MinIO via s3()
+- GCS via gcs()
+- Azure Blob via azure()
+- HTTP(S) via http()
 
 Example:
-    >>> from pyeff.remote import docker, ssh, k8s
+    >>> from pyeff.remote import docker, ssh, k8s, s3, http
+    >>> from pyeff import copy
     >>> 
-    >>> # Docker
-    >>> with docker("my-container") as d:
-    ...     d.copy("/app/logs", "./logs")
-    >>> 
-    >>> # SSH
-    >>> with ssh("user@host") as s:
-    ...     s.copy("/var/log", "./logs")
-    >>> 
-    >>> # Kubernetes
-    >>> with k8s("my-pod", namespace="prod") as k:
-    ...     k.copy("/app/logs", "./logs")
-    ...     k.copy("./config", "/app/config")
+    >>> copy("s3://my-bucket/logs/", "local:./logs")
+    >>> copy("https://example.com/file.zip", "local:./file.zip")
+    >>> copy("local:./data", "s3://bucket/uploads/")
 """
 
 from __future__ import annotations
@@ -49,9 +43,14 @@ from .k8s import (
     k8s,
     k8s_copy,
 )
+from .http import (
+    HTTPRemote,
+    http,
+    http_download,
+)
 
 __all__ = [
-    # Base classes and exceptions
+    # Base
     "RemoteError",
     "RemoteConnectionError",
     "RemoteFileNotFoundError",
@@ -71,6 +70,10 @@ __all__ = [
     "K8sRemote",
     "k8s",
     "k8s_copy",
+    # HTTP
+    "HTTPRemote",
+    "http",
+    "http_download",
 ]
 
 try:
@@ -79,3 +82,12 @@ try:
     SSH_AVAILABLE = True
 except ImportError:
     SSH_AVAILABLE = False
+
+from .s3 import S3Remote, s3, BOTO3_AVAILABLE as S3_AVAILABLE
+__all__.extend(["S3Remote", "s3"])
+
+from .gcs import GCSRemote, gcs, GCS_AVAILABLE
+__all__.extend(["GCSRemote", "gcs"])
+
+from .azure import AzureRemote, azure, AZURE_AVAILABLE
+__all__.extend(["AzureRemote", "azure"])
