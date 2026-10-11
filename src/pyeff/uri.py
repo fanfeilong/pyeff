@@ -230,6 +230,166 @@ class K8sPath(URIPath):
 
 
 @dataclass
+class S3Path(URIPath):
+    """S3 / MinIO object path.
+    
+    URI Format: s3://bucket/key or s3:bucket:/key
+    
+    Example:
+        >>> p = S3Path("my-bucket", "logs/app.log")
+        >>> p.to_uri()
+        's3://my-bucket/logs/app.log'
+    """
+    
+    bucket: str
+    path: str
+    endpoint_url: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    region: Optional[str] = None
+    session_token: Optional[str] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "s3"
+    
+    def to_uri(self) -> str:
+        key = self.path.lstrip("/")
+        return f"s3://{self.bucket}/{key}" if key else f"s3://{self.bucket}/"
+    
+    def __str__(self) -> str:
+        return self.to_uri()
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"bucket": self.bucket}
+        if self.endpoint_url:
+            params["endpoint_url"] = self.endpoint_url
+        if self.access_key:
+            params["access_key"] = self.access_key
+        if self.secret_key:
+            params["secret_key"] = self.secret_key
+        if self.region:
+            params["region"] = self.region
+        if self.session_token:
+            params["session_token"] = self.session_token
+        return params
+
+
+@dataclass
+class GCSPath(URIPath):
+    """Google Cloud Storage path.
+    
+    URI Format: gs://bucket/path or gcs:bucket:/path
+    """
+    
+    bucket: str
+    path: str
+    project: Optional[str] = None
+    credentials_path: Optional[str] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "gs"
+    
+    def to_uri(self) -> str:
+        key = self.path.lstrip("/")
+        return f"gs://{self.bucket}/{key}" if key else f"gs://{self.bucket}/"
+    
+    def __str__(self) -> str:
+        return self.to_uri()
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"bucket": self.bucket}
+        if self.project:
+            params["project"] = self.project
+        if self.credentials_path:
+            params["credentials_path"] = self.credentials_path
+        return params
+
+
+@dataclass
+class AzurePath(URIPath):
+    """Azure Blob Storage path.
+    
+    URI Format: az://container/blob or azure:container:/blob
+    """
+    
+    container: str
+    path: str
+    connection_string: Optional[str] = None
+    account_url: Optional[str] = None
+    credential: Optional[str] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "az"
+    
+    def to_uri(self) -> str:
+        key = self.path.lstrip("/")
+        return f"az://{self.container}/{key}" if key else f"az://{self.container}/"
+    
+    def __str__(self) -> str:
+        return self.to_uri()
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"container": self.container}
+        if self.connection_string:
+            params["connection_string"] = self.connection_string
+        if self.account_url:
+            params["account_url"] = self.account_url
+        if self.credential:
+            params["credential"] = self.credential
+        return params
+
+
+@dataclass
+class HTTPPath(URIPath):
+    """HTTP(S) URL path.
+    
+    URI Format: http://host/path or https://host/path
+    """
+    
+    url: str
+    timeout: Optional[float] = None
+    headers: Optional[Dict[str, str]] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "https" if self.url.startswith("https") else "http"
+    
+    @property
+    def path(self) -> str:
+        """Path component for remote ops (full URL works with HTTPRemote)."""
+        return self.url
+    
+    def to_uri(self) -> str:
+        return self.url
+    
+    def __str__(self) -> str:
+        return self.url
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        from urllib.parse import urlparse
+        parsed = urlparse(self.url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        params: Dict[str, Any] = {"base_url": base}
+        if self.timeout is not None:
+            params["timeout"] = self.timeout
+        if self.headers:
+            params["headers"] = self.headers
+        return params
+    
+    def get_url_path(self) -> str:
+        """Return path(+query) relative to base URL."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self.url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        return path
+
+
+@dataclass
 class ArchivePath(URIPath):
     """Archive file path.
     
@@ -390,6 +550,110 @@ def k8s(
     )
 
 
+def s3_uri(
+    bucket: str,
+    path: str = "",
+    endpoint_url: Optional[str] = None,
+    access_key: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    region: Optional[str] = None,
+    session_token: Optional[str] = None,
+) -> S3Path:
+    """Create an S3 / MinIO path.
+    
+    Example:
+        >>> from pyeff.uri import s3_uri
+        >>> s3_uri("my-bucket", "logs/app.log")
+        >>> s3_uri("bucket", "data/", endpoint_url="http://localhost:9000")
+    """
+    return S3Path(
+        bucket=bucket,
+        path=path,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        session_token=session_token,
+    )
+
+
+# Alias matching other builders
+def s3(
+    bucket: str,
+    path: str = "",
+    endpoint_url: Optional[str] = None,
+    access_key: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    region: Optional[str] = None,
+    session_token: Optional[str] = None,
+) -> S3Path:
+    """Create an S3 / MinIO path (alias of s3_uri)."""
+    return s3_uri(
+        bucket, path,
+        endpoint_url=endpoint_url,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        session_token=session_token,
+    )
+
+
+def gs(
+    bucket: str,
+    path: str = "",
+    project: Optional[str] = None,
+    credentials_path: Optional[str] = None,
+) -> GCSPath:
+    """Create a GCS path.
+    
+    Example:
+        >>> from pyeff.uri import gs
+        >>> gs("my-bucket", "logs/app.log")
+    """
+    return GCSPath(
+        bucket=bucket,
+        path=path,
+        project=project,
+        credentials_path=credentials_path,
+    )
+
+
+def az(
+    container: str,
+    path: str = "",
+    connection_string: Optional[str] = None,
+    account_url: Optional[str] = None,
+    credential: Optional[str] = None,
+) -> AzurePath:
+    """Create an Azure Blob path.
+    
+    Example:
+        >>> from pyeff.uri import az
+        >>> az("my-container", "logs/app.log", connection_string="...")
+    """
+    return AzurePath(
+        container=container,
+        path=path,
+        connection_string=connection_string,
+        account_url=account_url,
+        credential=credential,
+    )
+
+
+def http_url(
+    url: str,
+    timeout: Optional[float] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> HTTPPath:
+    """Create an HTTP(S) path.
+    
+    Example:
+        >>> from pyeff.uri import http_url
+        >>> http_url("https://example.com/file.zip")
+    """
+    return HTTPPath(url=url, timeout=timeout, headers=headers)
+
+
 def archive(
     archive_path: PathLike,
     inner_path: Optional[str] = None,
@@ -412,6 +676,24 @@ def archive(
         ArchivePath('archive:./backup.zip:/config.json')
     """
     return ArchivePath(str(archive_path), inner_path)
+
+
+def _parse_bucket_key(rest: str) -> Tuple[str, str]:
+    """Parse //bucket/key or bucket:/key into (bucket, key)."""
+    if rest.startswith("//"):
+        rest = rest[2:]
+        if "/" in rest:
+            bucket, key = rest.split("/", 1)
+        else:
+            bucket, key = rest, ""
+        return bucket, key
+    
+    # bucket:/key or bucket:key
+    if ":" in rest:
+        bucket, key = rest.split(":", 1)
+        return bucket, key.lstrip("/")
+    
+    raise ValueError(f"Invalid bucket path: {rest!r}")
 
 
 # URI parsing
@@ -509,6 +791,44 @@ def parse_uri(uri: str) -> URIPath:
             return ArchivePath(archive_path, inner_path)
         return ArchivePath(rest)
     
+    elif scheme == "s3":
+        try:
+            bucket, key = _parse_bucket_key(rest)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid s3 URI: {uri!r}. "
+                f"Expected s3://bucket/key or s3:bucket:/key"
+            ) from e
+        return S3Path(bucket=bucket, path=key)
+    
+    elif scheme in ("gs", "gcs"):
+        try:
+            bucket, key = _parse_bucket_key(rest)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid gs/gcs URI: {uri!r}. "
+                f"Expected gs://bucket/key or gcs:bucket:/key"
+            ) from e
+        return GCSPath(bucket=bucket, path=key)
+    
+    elif scheme in ("az", "azure"):
+        try:
+            container, key = _parse_bucket_key(rest)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid az/azure URI: {uri!r}. "
+                f"Expected az://container/blob or azure:container:/blob"
+            ) from e
+        return AzurePath(container=container, path=key)
+    
+    elif scheme in ("http", "https"):
+        if not rest.startswith("//"):
+            raise ValueError(
+                f"Invalid http URI: {uri!r}. "
+                f"Expected http://host/path or https://host/path"
+            )
+        return HTTPPath(url=f"{scheme}:{rest}")
+    
     else:
         raise ValueError(f"Unknown URI scheme: {scheme!r}")
 
@@ -540,11 +860,20 @@ __all__ = [
     "DockerPath",
     "SSHPath",
     "K8sPath",
+    "S3Path",
+    "GCSPath",
+    "AzurePath",
+    "HTTPPath",
     "ArchivePath",
     "local",
     "docker",
     "ssh",
     "k8s",
+    "s3",
+    "s3_uri",
+    "gs",
+    "az",
+    "http_url",
     "archive",
     "parse_uri",
     "resolve_path",
