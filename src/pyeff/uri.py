@@ -390,6 +390,97 @@ class HTTPPath(URIPath):
 
 
 @dataclass
+class SMBPath(URIPath):
+    """SMB/CIFS NAS path.
+    
+    URI Format: smb://host/share/path
+    """
+    
+    host: str
+    share: str
+    path: str = ""
+    username: Optional[str] = None
+    password: Optional[str] = None
+    port: int = 445
+    domain: Optional[str] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "smb"
+    
+    def to_uri(self) -> str:
+        key = self.path.lstrip("/")
+        base = f"smb://{self.host}/{self.share}"
+        return f"{base}/{key}" if key else f"{base}/"
+    
+    def __str__(self) -> str:
+        return self.to_uri()
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "host": self.host,
+            "share": self.share,
+            "port": self.port,
+        }
+        if self.username:
+            params["username"] = self.username
+        if self.password:
+            params["password"] = self.password
+        if self.domain:
+            params["domain"] = self.domain
+        return params
+
+
+@dataclass
+class WebDAVPath(URIPath):
+    """WebDAV NAS path.
+    
+    URI Format:
+        webdav://host/path
+        webdavs://host/path  (HTTPS)
+        dav:// / davs://
+    """
+    
+    base_url: str
+    path: str = ""
+    username: Optional[str] = None
+    password: Optional[str] = None
+    timeout: Optional[float] = None
+    verify_ssl: bool = True
+    
+    @property
+    def scheme(self) -> str:
+        if self.base_url.startswith("https"):
+            return "webdavs"
+        return "webdav"
+    
+    def to_uri(self) -> str:
+        from urllib.parse import urlparse
+        parsed = urlparse(self.base_url)
+        # Prefer webdavs:// for https
+        scheme = "webdavs" if parsed.scheme == "https" else "webdav"
+        key = self.path.lstrip("/")
+        root = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+        return f"{root}/{key}" if key else f"{root}/"
+    
+    def __str__(self) -> str:
+        return self.to_uri()
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "base_url": self.base_url,
+            "verify_ssl": self.verify_ssl,
+        }
+        if self.username:
+            params["username"] = self.username
+        if self.password:
+            params["password"] = self.password
+        if self.timeout is not None:
+            params["timeout"] = self.timeout
+        return params
+
+
+@dataclass
 class ArchivePath(URIPath):
     """Archive file path.
     
@@ -654,6 +745,68 @@ def http_url(
     return HTTPPath(url=url, timeout=timeout, headers=headers)
 
 
+def smb_uri(
+    host: str,
+    share: str,
+    path: str = "",
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    port: int = 445,
+    domain: Optional[str] = None,
+) -> SMBPath:
+    """Create an SMB/CIFS path.
+    
+    Example:
+        >>> from pyeff.uri import smb_uri
+        >>> smb_uri("nas.local", "shared", "docs/", username="user", password="pass")
+    """
+    return SMBPath(
+        host=host,
+        share=share,
+        path=path,
+        username=username,
+        password=password,
+        port=port,
+        domain=domain,
+    )
+
+
+def webdav_uri(
+    base_url: str,
+    path: str = "",
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    timeout: Optional[float] = None,
+    verify_ssl: bool = True,
+) -> WebDAVPath:
+    """Create a WebDAV path.
+    
+    Example:
+        >>> from pyeff.uri import webdav_uri
+        >>> webdav_uri("https://nas.local/webdav", "docs/",
+        ...            username="user", password="pass")
+    """
+    # Normalize webdav(s):// to http(s):// for base_url storage
+    url = base_url
+    if url.startswith("webdavs://"):
+        url = "https://" + url[len("webdavs://"):]
+    elif url.startswith("webdav://"):
+        url = "http://" + url[len("webdav://"):]
+    elif url.startswith("davs://"):
+        url = "https://" + url[len("davs://"):]
+    elif url.startswith("dav://"):
+        url = "http://" + url[len("dav://"):]
+    
+    return WebDAVPath(
+        base_url=url,
+        path=path,
+        username=username,
+        password=password,
+        timeout=timeout,
+        verify_ssl=verify_ssl,
+    )
+
+
 def archive(
     archive_path: PathLike,
     inner_path: Optional[str] = None,
@@ -829,6 +982,64 @@ def parse_uri(uri: str) -> URIPath:
             )
         return HTTPPath(url=f"{scheme}:{rest}")
     
+    elif scheme == "smb":
+        if not rest.startswith("//"):
+            # smb:host/share:/path
+            if ":/" in rest or rest.count(":") == 1:
+                try:
+                    host_share, key = rest.split(":", 1)
+                except ValueError as e:
+                    raise ValueError(
+                        f"Invalid smb URI: {uri!r}. "
+                        f"Expected smb://host/share/path"
+                    ) from e
+                parts = host_share.strip("/").split("/")
+                if len(parts) < 2:
+                    raise ValueError(
+                        f"Invalid smb URI: {uri!r}. "
+                        f"Expected smb://host/share/path"
+                    )
+                return SMBPath(
+                    host=parts[0],
+                    share=parts[1],
+                    path=key.lstrip("/"),
+                )
+            raise ValueError(
+                f"Invalid smb URI: {uri!r}. "
+                f"Expected smb://host/share/path"
+            )
+        # smb://host/share/path
+        body = rest[2:]
+        parts = body.split("/")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            raise ValueError(
+                f"Invalid smb URI: {uri!r}. "
+                f"Expected smb://host/share/path"
+            )
+        host, share = parts[0], parts[1]
+        key = "/".join(parts[2:])
+        return SMBPath(host=host, share=share, path=key)
+    
+    elif scheme in ("webdav", "webdavs", "dav", "davs"):
+        if not rest.startswith("//"):
+            raise ValueError(
+                f"Invalid webdav URI: {uri!r}. "
+                f"Expected webdav(s)://host/path"
+            )
+        https = scheme in ("webdavs", "davs")
+        http_scheme = "https" if https else "http"
+        body = rest[2:]
+        if "/" in body:
+            netloc, path = body.split("/", 1)
+        else:
+            netloc, path = body, ""
+        base_url = f"{http_scheme}://{netloc}"
+        # If path looks like a dav root with nested path, keep full base
+        # webdavs://host/remote.php/dav/files/user/Documents/file
+        # → base_url includes dav root; path is relative.
+        # Heuristic: treat entire URL path as relative to host root.
+        return WebDAVPath(base_url=base_url, path=path)
+    
     else:
         raise ValueError(f"Unknown URI scheme: {scheme!r}")
 
@@ -864,6 +1075,8 @@ __all__ = [
     "GCSPath",
     "AzurePath",
     "HTTPPath",
+    "SMBPath",
+    "WebDAVPath",
     "ArchivePath",
     "local",
     "docker",
@@ -874,6 +1087,8 @@ __all__ = [
     "gs",
     "az",
     "http_url",
+    "smb_uri",
+    "webdav_uri",
     "archive",
     "parse_uri",
     "resolve_path",

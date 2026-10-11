@@ -43,6 +43,8 @@ from .uri import (
     GCSPath,
     AzurePath,
     HTTPPath,
+    SMBPath,
+    WebDAVPath,
     ArchivePath,
     resolve_path,
 )
@@ -156,9 +158,7 @@ def _get_copy_handler(src: URIPath, dst: URIPath):
     """Get the appropriate copy handler for source and destination types."""
     key = (src.scheme, dst.scheme)
     
-    # Object-store / HTTP schemes that use _copy_via_temp for cross-backend
     _TEMP = _copy_via_temp
-    _OBJ = ("s3", "gs", "az", "http", "https")
     
     handlers = {
         ("local", "local"): _copy_local_to_local,
@@ -170,39 +170,42 @@ def _get_copy_handler(src: URIPath, dst: URIPath):
         ("local", "az"): _copy_local_to_az,
         ("local", "http"): _copy_local_to_http,
         ("local", "https"): _copy_local_to_http,
+        ("local", "smb"): _copy_local_to_smb,
+        ("local", "webdav"): _copy_local_to_webdav,
+        ("local", "webdavs"): _copy_local_to_webdav,
         ("local", "archive"): _copy_local_to_archive,
         ("docker", "local"): _copy_docker_to_local,
         ("docker", "docker"): _copy_docker_to_docker,
         ("docker", "ssh"): _copy_docker_to_ssh,
-        ("docker", "k8s"): _TEMP,
         ("ssh", "local"): _copy_ssh_to_local,
         ("ssh", "docker"): _copy_ssh_to_docker,
         ("ssh", "ssh"): _copy_ssh_to_ssh,
-        ("ssh", "k8s"): _TEMP,
         ("k8s", "local"): _copy_k8s_to_local,
-        ("k8s", "docker"): _TEMP,
-        ("k8s", "ssh"): _TEMP,
-        ("k8s", "k8s"): _TEMP,
         ("s3", "local"): _copy_s3_to_local,
         ("gs", "local"): _copy_gs_to_local,
         ("az", "local"): _copy_az_to_local,
         ("http", "local"): _copy_http_to_local,
         ("https", "local"): _copy_http_to_local,
+        ("smb", "local"): _copy_smb_to_local,
+        ("webdav", "local"): _copy_webdav_to_local,
+        ("webdavs", "local"): _copy_webdav_to_local,
         ("archive", "local"): _copy_archive_to_local,
         ("archive", "docker"): _copy_archive_to_docker,
         ("archive", "ssh"): _copy_archive_to_ssh,
         ("archive", "k8s"): _copy_archive_to_k8s,
     }
     
-    # Cross-backend via temp for remotes + object stores
-    remotes = ("docker", "ssh", "k8s", "s3", "gs", "az", "http", "https")
+    remotes = (
+        "docker", "ssh", "k8s", "s3", "gs", "az",
+        "http", "https", "smb", "webdav", "webdavs",
+    )
     for a in remotes:
         for b in remotes:
             if (a, b) not in handlers:
                 handlers[(a, b)] = _TEMP
-    for obj in _OBJ:
-        if ("archive", obj) not in handlers:
-            handlers[("archive", obj)] = _copy_archive_via_temp
+    for scheme in remotes:
+        if ("archive", scheme) not in handlers:
+            handlers[("archive", scheme)] = _copy_archive_via_temp
     
     handler = handlers.get(key)
     if handler is None:
@@ -337,6 +340,36 @@ def _copy_local_to_http(
         )
 
 
+def _copy_local_to_smb(
+    src: LocalPath,
+    dst: SMBPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to SMB share."""
+    from .remote.smb import SMBRemote
+    
+    with SMBRemote(**dst.get_connection_params()) as client:
+        return client.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_local_to_webdav(
+    src: LocalPath,
+    dst: WebDAVPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to WebDAV."""
+    from .remote.webdav import WebDAVRemote
+    
+    with WebDAVRemote(**dst.get_connection_params()) as client:
+        return client.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
 def _copy_local_to_archive(
     src: LocalPath,
     dst: ArchivePath,
@@ -380,6 +413,12 @@ def _open_remote(path: URIPath):
     elif isinstance(path, HTTPPath):
         from .remote.http import HTTPRemote
         return HTTPRemote(**path.get_connection_params())
+    elif isinstance(path, SMBPath):
+        from .remote.smb import SMBRemote
+        return SMBRemote(**path.get_connection_params())
+    elif isinstance(path, WebDAVPath):
+        from .remote.webdav import WebDAVRemote
+        return WebDAVRemote(**path.get_connection_params())
     else:
         raise CopyError(f"Not a remote path: {path.scheme}")
 
@@ -629,6 +668,36 @@ def _copy_http_to_local(
         )
 
 
+def _copy_smb_to_local(
+    src: SMBPath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy SMB share to local."""
+    from .remote.smb import SMBRemote
+    
+    with SMBRemote(**src.get_connection_params()) as client:
+        return client.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _copy_webdav_to_local(
+    src: WebDAVPath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy WebDAV to local."""
+    from .remote.webdav import WebDAVRemote
+    
+    with WebDAVRemote(**src.get_connection_params()) as client:
+        return client.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
 # Archive operations
 
 def _copy_archive_to_local(
@@ -760,7 +829,7 @@ def remove(
         with K8sRemote(**params) as k:
             return k.remove(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             return client.remove(
                 _remote_path_arg(uri_path),
@@ -819,7 +888,7 @@ def search(
         with K8sRemote(**params) as k:
             return k.search(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             return client.search(
                 _remote_path_arg(uri_path),
@@ -871,7 +940,7 @@ def exists(path: Union[str, URIPath]) -> bool:
         with K8sRemote(**params) as k:
             return k.exists(uri_path.path)
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             return client.exists(_remote_path_arg(uri_path))
     
@@ -955,7 +1024,7 @@ def listdir(
                 is_dir=i.is_dir, is_file=i.is_file
             ) for i in items]
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             items = client.listdir(
                 _remote_path_arg(uri_path), mode=mode, patterns=patterns
@@ -1032,7 +1101,7 @@ def read(
                 return k.read_bytes(uri_path.path)
             return k.read_text(uri_path.path, encoding=encoding)
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             if binary:
                 return client.read_bytes(_remote_path_arg(uri_path))
@@ -1104,7 +1173,7 @@ def write(
             else:
                 k.write_text(uri_path.path, content, encoding=encoding)
     
-    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath)):
+    elif isinstance(uri_path, (S3Path, GCSPath, AzurePath, HTTPPath, SMBPath, WebDAVPath)):
         with _open_remote(uri_path) as client:
             if isinstance(content, bytes):
                 client.write_bytes(_remote_path_arg(uri_path), content)
