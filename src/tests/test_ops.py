@@ -1,9 +1,12 @@
-"""Tests for pyeff.ops module (unified copy operations)."""
+"""Tests for pyeff.ops module (unified operations)."""
 
 import pytest
 from pathlib import Path
 
-from pyeff.ops import copy, CopyError
+from pyeff.ops import (
+    copy, remove, search, exists, listdir, read, write, move,
+    CopyError, RemoveError, ReadError, WriteError, FileInfo,
+)
 from pyeff.uri import local, docker, ssh, archive
 
 
@@ -191,3 +194,141 @@ class TestProgress:
         
         # Note: local-to-local copy doesn't support progress yet
         # This test just ensures it doesn't error
+
+
+class TestRemove:
+    def test_remove_local_file(self, temp_dir):
+        """Test removing a local file."""
+        file = temp_dir / "to_remove.txt"
+        file.write_text("content")
+        
+        assert file.exists()
+        remove(f"local:{file}")
+        assert not file.exists()
+    
+    def test_remove_local_directory(self, sample_tree, temp_dir):
+        """Test removing a local directory."""
+        assert sample_tree.exists()
+        remove(f"local:{sample_tree}")
+        assert not sample_tree.exists()
+    
+    def test_remove_with_pattern(self, sample_tree, temp_dir):
+        """Test removing with pattern filter."""
+        count = remove(f"local:{sample_tree}", mode="include", patterns=["*.txt"])
+        
+        assert count == 2
+        assert (sample_tree / "file2.md").exists()
+        assert not (sample_tree / "file1.txt").exists()
+    
+    def test_remove_missing_ok(self, temp_dir):
+        """Test removing non-existent path with missing_ok."""
+        result = remove(f"local:{temp_dir}/nonexistent", missing_ok=True)
+        assert result == 0
+
+
+class TestSearch:
+    def test_search_local(self, sample_tree):
+        """Test searching local files with include pattern."""
+        files = search(f"local:{sample_tree}", mode="include", patterns=["*.txt"])
+        
+        assert len(files) == 2
+        assert any("file1.txt" in str(f) for f in files)
+    
+    def test_search_all_files(self, sample_tree):
+        """Test searching all files."""
+        files = search(f"local:{sample_tree}")
+        assert len(files) == 5
+    
+    def test_search_with_path_builder(self, sample_tree):
+        """Test searching with path builder and include pattern."""
+        files = search(local(str(sample_tree)), mode="include", patterns=["*.md"])
+        assert len(files) == 2
+
+
+class TestExists:
+    def test_exists_local_file(self, sample_tree):
+        """Test checking if local file exists."""
+        assert exists(f"local:{sample_tree}/file1.txt") is True
+        assert exists(f"local:{sample_tree}/nonexistent.txt") is False
+    
+    def test_exists_local_directory(self, sample_tree):
+        """Test checking if local directory exists."""
+        assert exists(f"local:{sample_tree}") is True
+        assert exists(f"local:{sample_tree}/subdir") is True
+    
+    def test_exists_with_path_builder(self, sample_tree):
+        """Test exists with path builder."""
+        assert exists(local(str(sample_tree / "file1.txt"))) is True
+
+
+class TestListdir:
+    def test_listdir_local(self, sample_tree):
+        """Test listing local directory."""
+        items = listdir(f"local:{sample_tree}")
+        
+        assert len(items) == 4  # 3 files + 1 subdir
+        assert all(isinstance(i, FileInfo) for i in items)
+        
+        names = [i.name for i in items]
+        assert "file1.txt" in names
+        assert "subdir" in names
+    
+    def test_listdir_with_path_builder(self, sample_tree):
+        """Test listdir with path builder."""
+        items = listdir(local(str(sample_tree)))
+        assert len(items) == 4
+
+
+class TestReadWrite:
+    def test_read_local_text(self, sample_tree):
+        """Test reading local text file."""
+        content = read(f"local:{sample_tree}/file1.txt")
+        assert content == "content1"
+    
+    def test_read_local_binary(self, sample_tree):
+        """Test reading local binary file."""
+        content = read(f"local:{sample_tree}/file1.txt", binary=True)
+        assert content == b"content1"
+    
+    def test_write_local_text(self, temp_dir):
+        """Test writing local text file."""
+        file = temp_dir / "written.txt"
+        write(f"local:{file}", "hello world")
+        
+        assert file.read_text() == "hello world"
+    
+    def test_write_local_binary(self, temp_dir):
+        """Test writing local binary file."""
+        file = temp_dir / "written.bin"
+        write(f"local:{file}", b"\x00\x01\x02")
+        
+        assert file.read_bytes() == b"\x00\x01\x02"
+    
+    def test_read_write_with_path_builder(self, temp_dir):
+        """Test read/write with path builder."""
+        file = temp_dir / "test.txt"
+        write(local(str(file)), "test content")
+        content = read(local(str(file)))
+        assert content == "test content"
+
+
+class TestMove:
+    def test_move_local_file(self, temp_dir):
+        """Test moving a local file."""
+        src = temp_dir / "source.txt"
+        dst = temp_dir / "dest.txt"
+        src.write_text("content")
+        
+        move(f"local:{src}", f"local:{dst}")
+        
+        assert not src.exists()
+        assert dst.read_text() == "content"
+    
+    def test_move_local_directory(self, sample_tree, temp_dir):
+        """Test moving a local directory."""
+        dst = temp_dir / "moved"
+        
+        move(f"local:{sample_tree}", f"local:{dst}")
+        
+        assert not sample_tree.exists()
+        assert (dst / "file1.txt").read_text() == "content1"

@@ -40,50 +40,72 @@ pip install pyeff[dev]
 
 ## Unified API with URI Paths
 
-pyeff provides a **unified `copy()` function** that works across all backends using URI-style paths:
+pyeff provides **unified operations** that work across all backends using URI-style paths:
 
 ```python
-from pyeff import copy
+from pyeff import copy, remove, search, exists, read, write, move, listdir
 from pyeff.uri import local, docker, ssh, archive
 
-# URI strings (simple cases)
+# Copy
 copy("local:./src", "local:./dst")
-copy("docker:my-container:/app/logs", "local:./logs")
+copy("docker:my-container:/logs", "local:./logs")
 copy("local:./data", "archive:./backup.zip")
-copy("archive:./backup.zip", "local:./restore")
+copy("ssh:user@host:/data", "local:./backup")
 
-# Path builders (complex cases with options)
-copy(local("./src"), docker("container", "/app"))
+# Remove
+remove("local:./temp")
+remove("docker:my-container:/tmp/cache")
+remove("ssh:user@host:/var/log", mode="include", patterns=["*.tmp"])
+
+# Search
+files = search("local:./src", mode="include", patterns=["*.py"])
+files = search("docker:my-container:/logs", mode="include", patterns=["*.log"])
+files = search("ssh:user@host:/data", mode="include", patterns=["*.csv"])
+
+# Exists
+if exists("docker:my-container:/app/config.json"):
+    print("Config exists")
+
+# Read / Write
+content = read("ssh:user@host:/etc/config")
+write("docker:my-container:/app/config.json", '{"key": "value"}')
+data = read("archive:./backup.zip:/config.json")
+
+# List directory
+items = listdir("local:./src")
+items = listdir("docker:my-container:/app")
+
+# Move (cross-backend = copy + remove)
+move("local:./old", "local:./new")
+move("docker:my-container:/tmp/data", "local:./data")
+
+# Path builders (with options)
 copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
-
-# Mixed usage
-copy("local:./config", docker("my-container", "/app/config"))
 ```
 
 ### URI Format
 
 | Scheme | Format | Example |
 |--------|--------|---------|
-| Local | `local:./path` or `local:/path` | `local:./data`, `local:/home/user` |
+| Local | `local:./path` | `local:./data` |
 | Docker | `docker:container:/path` | `docker:my-app:/var/log` |
-| SSH | `ssh:user@host:/path` | `ssh:admin@server:/etc/config` |
+| SSH | `ssh:user@host:/path` | `ssh:admin@server:/etc` |
 | SSH (port) | `ssh:user@host:port:/path` | `ssh:admin@server:2222:/data` |
 | Archive | `archive:./path.zip` | `archive:./backup.tar.gz` |
 | Archive (inner) | `archive:./path.zip:/inner` | `archive:./data.zip:/config.json` |
 
-### Supported Operations
+### Unified Operations
 
-| Source | Destination | Operation |
-|--------|-------------|-----------|
-| local | local | Copy files |
-| local | docker | Copy to container |
-| local | ssh | Upload via SFTP |
-| local | archive | Compress |
-| docker | local | Copy from container |
-| ssh | local | Download via SFTP |
-| archive | local | Extract |
-| docker | ssh | Copy (via temp) |
-| ssh | docker | Copy (via temp) |
+| Operation | Description | Supported Backends |
+|-----------|-------------|-------------------|
+| `copy(src, dst)` | Copy files | all |
+| `remove(path)` | Remove files/dirs | local, docker, ssh |
+| `search(path)` | Search files | local, docker, ssh, archive |
+| `exists(path)` | Check existence | all |
+| `listdir(path)` | List directory | local, docker, ssh, archive |
+| `read(path)` | Read file content | all |
+| `write(path, content)` | Write file content | local, docker, ssh |
+| `move(src, dst)` | Move files | all (cross-backend via copy+remove) |
 
 ## Quick Start
 

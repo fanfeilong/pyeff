@@ -52,22 +52,33 @@ from . import logger
 from . import shell
 from . import yaml
 
-# Unified copy function (URI-based) - this is the primary copy
-from .ops import copy, CopyError
+# Unified operations (URI-based) - these are the primary APIs
+from .ops import (
+    copy,
+    remove,
+    search,
+    exists,
+    listdir,
+    read,
+    write,
+    move,
+    FileInfo,
+    OperationError,
+    CopyError,
+    RemoveError,
+    SearchError,
+    ReadError,
+    WriteError,
+)
 
-# Local fs operations (fs.copy still available for direct local operations)
+# Additional fs operations (also available via fs module)
 from .fs import (
     clear_pattern_cache,
     current_dir,
     ensure,
-    exists,
     file_size,
     is_empty_dir,
-    listdir,
     listdir_iter,
-    move,
-    remove,
-    search,
     search_iter,
     tree,
     walk,
@@ -205,19 +216,27 @@ __all__ = [
     "shell",
     "uri",
     "yaml",
-    # Unified copy (URI-based)
+    # Unified operations (URI-based)
     "copy",
-    "CopyError",
-    # fs exports
-    "current_dir",
-    "ensure",
-    "exists",
-    "file_size",
-    "is_empty_dir",
-    "listdir",
-    "move",
     "remove",
     "search",
+    "exists",
+    "listdir",
+    "read",
+    "write",
+    "move",
+    "FileInfo",
+    "OperationError",
+    "CopyError",
+    "RemoveError",
+    "SearchError",
+    "ReadError",
+    "WriteError",
+    # Additional fs exports
+    "current_dir",
+    "ensure",
+    "file_size",
+    "is_empty_dir",
     "tree",
     "walk",
     "walk_iter",
