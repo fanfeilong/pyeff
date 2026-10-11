@@ -135,18 +135,37 @@ copy(webdav_uri("https://cloud/remote.php/dav/files/user", "Documents/",
 
 ### Unified Operations
 
+All path-taking APIs accept bare local paths, `Path` objects, or URI strings.
+
 | Operation | Description | Supported Backends |
 |-----------|-------------|-------------------|
-| `copy(src, dst)` | Copy files | all |
-| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s, s3, gs, az, http, smb, webdav |
-| `search(path)` | Search files | local, docker, ssh, k8s, s3, gs, az, smb, webdav, archive |
-| `exists(path)` | Check existence | all |
-| `listdir(path)` | List directory | local, docker, ssh, k8s, s3, gs, az, smb, webdav, archive |
-| `read(path)` | Read file content | all |
-| `write(path, content)` | Write file content | local, docker, ssh, k8s, s3, gs, az, http, smb, webdav |
-| `move(src, dst)` | Move files | all (cross-backend via copy+remove) |
+| `copy(src, dst)` | Copy files | **all ↔ all** (incl. remote→archive, archive→archive) |
+| `remove(path)` | Remove files/dirs | **all** (archive: member or whole file) |
+| `search(path)` | Search files | **all** (http: URL existence only) |
+| `exists(path)` | Check existence | **all** |
+| `listdir(path)` | List directory | **all** (http: single URL entry) |
+| `read(path)` / `write(path, content)` | File content | **all** (archive needs inner path) |
+| `move(src, dst)` | Move files | **all** (cross-backend via copy+remove) |
+| `file_size` / `ensure` / `is_empty_dir` | Metadata / dirs | **all*** |
+| `tree` / `walk` / `walk_iter` | Discovery | **all*** |
+| `load_json` / `dump_json` | JSON I/O | **all** |
+| `load_yaml*` / `dump_yaml*` | YAML I/O | **all** |
+| `load_all_text` / `dump_all_text` / `load_lines` / `dump_lines` | Text I/O | **all** |
+| `hash_file` | File hashing | **all** |
+
+\* `ensure` / `is_empty_dir` are not supported for bare HTTP URLs; archive `ensure` is unsupported.
 
 Optional installs: `pip install pyeff[s3]`, `pyeff[gcs]`, `pyeff[azure]`, `pyeff[smb]` / `pyeff[nas]`, or `pyeff[cloud]`. WebDAV needs no extra package.
+
+```python
+from pyeff import load_json, dump_json, tree, file_size, hash_file
+
+cfg = load_json("s3://bucket/config.json")
+dump_json(cfg, "archive:./backup.zip:/config.json")
+print(tree("docker:my-app:/app"))
+print(file_size("https://example.com/file.bin"))
+print(hash_file("smb://nas/share/report.csv"))
+```
 
 ## Quick Start
 

@@ -15,12 +15,24 @@ from typing import Any, List, Optional, Union
 import yaml
 import yaml_include
 
-PathLike = Union[str, Path]
+from .uri import URIPath, resolve_path, join_uri, LocalPath
+
+PathLike = Union[str, Path, URIPath]
 
 
-def _to_path(p: PathLike) -> Path:
+def _to_path(p: Union[str, Path]) -> Path:
     """Convert string or Path to Path object."""
     return Path(p) if not isinstance(p, Path) else p
+
+
+def _read_text(path: PathLike, encoding: str = "utf-8") -> str:
+    from .ops import read
+    return read(path, encoding=encoding)  # type: ignore[return-value]
+
+
+def _write_text(path: PathLike, content: str, encoding: str = "utf-8") -> None:
+    from .ops import write
+    write(path, content, encoding=encoding)
 
 
 def load_yaml_full(
@@ -30,36 +42,35 @@ def load_yaml_full(
 ) -> Any:
     """Load a YAML file with support for !include / !inc directives.
 
-    This function processes YAML files that contain include directives,
-    resolving them relative to the specified base path.
-
-    Args:
-        yaml_file: Path to the YAML file to load.
-        base_path: Base directory for resolving include paths.
-        encoding: File encoding (default: utf-8).
-
-    Returns:
-        Parsed YAML data with included files resolved.
-
-    Raises:
-        FileNotFoundError: If the YAML file does not exist.
-        yaml.YAMLError: If the file contains invalid YAML.
+    Include paths are resolved relative to *base_path*, which may be a
+    local directory or any URI-backed directory.
 
     Example:
         >>> # config.yml contains: data: !include data.yml
         >>> config = load_yaml_full("config.yml", "./configs")
+        >>> config = load_yaml_full(
+        ...     "archive:./bundle.zip:/config.yml",
+        ...     "archive:./bundle.zip:/",
+        ... )
     """
-    file_path = _to_path(yaml_file)
-    base = _to_path(base_path)
+    content = _read_text(yaml_file, encoding)
+    base = resolve_path(base_path)
 
-    if not file_path.exists():
-        raise FileNotFoundError(f"YAML file not found: {yaml_file}")
+    if isinstance(base, LocalPath):
+        local_base = str(Path(base.path))
+        yaml.add_constructor("!inc", yaml_include.Constructor(base_dir=local_base))
+        yaml.add_constructor("!include", yaml_include.Constructor(base_dir=local_base))
+        return yaml.full_load(content)
 
-    yaml.add_constructor("!inc", yaml_include.Constructor(base_dir=str(base)))
-    yaml.add_constructor("!include", yaml_include.Constructor(base_dir=str(base)))
+    def _include_constructor(loader: Any, node: Any) -> Any:
+        rel = loader.construct_scalar(node)
+        included = _read_text(join_uri(base, rel), encoding)
+        return yaml.safe_load(included)
 
-    with open(file_path, "r", encoding=encoding) as f:
-        return yaml.full_load(f)
+    loader = yaml.FullLoader
+    yaml.add_constructor("!inc", _include_constructor, Loader=loader)
+    yaml.add_constructor("!include", _include_constructor, Loader=loader)
+    return yaml.load(content, Loader=loader)
 
 
 def load_yaml_safe(
@@ -69,29 +80,14 @@ def load_yaml_safe(
     """Safely load a YAML file without executing include directives.
 
     Include directives (!include, !inc) are ignored and return None.
-    This is useful when you want to load YAML without resolving includes.
-
-    Args:
-        yaml_file: Path to the YAML file to load.
-        encoding: File encoding (default: utf-8).
-
-    Returns:
-        Parsed YAML data (includes return None).
-
-    Raises:
-        FileNotFoundError: If the YAML file does not exist.
-        yaml.YAMLError: If the file contains invalid YAML.
+    Supports local paths and URI backends.
     """
-    file_path = _to_path(yaml_file)
-
-    if not file_path.exists():
-        raise FileNotFoundError(f"YAML file not found: {yaml_file}")
+    content = _read_text(yaml_file, encoding)
 
     yaml.add_constructor("!include", lambda loader, node: None, Loader=yaml.SafeLoader)
     yaml.add_constructor("!inc", lambda loader, node: None, Loader=yaml.SafeLoader)
 
-    with open(file_path, "r", encoding=encoding) as f:
-        return yaml.safe_load(f)
+    return yaml.safe_load(content)
 
 
 def load_yaml(
@@ -124,30 +120,14 @@ def dump_yaml(
     default_flow_style: bool = False,
     allow_unicode: bool = True,
 ) -> None:
-    """Write an object to a YAML file.
-
-    Args:
-        obj: Python object to serialize.
-        yaml_file: Destination file path.
-        encoding: File encoding (default: utf-8).
-        sort_keys: If True, sort dictionary keys (default: False).
-        default_flow_style: If True, use flow style (default: False).
-        allow_unicode: If True, allow unicode characters (default: True).
-
-    Raises:
-        yaml.YAMLError: If the object cannot be serialized.
-    """
-    file_path = _to_path(yaml_file)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(file_path, "w", encoding=encoding) as f:
-        yaml.dump(
-            obj,
-            f,
-            sort_keys=sort_keys,
-            default_flow_style=default_flow_style,
-            allow_unicode=allow_unicode,
-        )
+    """Write an object to a YAML file (local path or URI)."""
+    content = yaml.dump(
+        obj,
+        sort_keys=sort_keys,
+        default_flow_style=default_flow_style,
+        allow_unicode=allow_unicode,
+    )
+    _write_text(yaml_file, content, encoding=encoding)
 
 
 def loads(s: str) -> Any:
@@ -197,26 +177,9 @@ def load_yaml_all(
     yaml_file: PathLike,
     encoding: str = "utf-8",
 ) -> List[Any]:
-    """Load all documents from a multi-document YAML file.
-
-    Args:
-        yaml_file: Path to the YAML file.
-        encoding: File encoding (default: utf-8).
-
-    Returns:
-        List of parsed YAML documents.
-
-    Raises:
-        FileNotFoundError: If the YAML file does not exist.
-        yaml.YAMLError: If the file contains invalid YAML.
-    """
-    file_path = _to_path(yaml_file)
-
-    if not file_path.exists():
-        raise FileNotFoundError(f"YAML file not found: {yaml_file}")
-
-    with open(file_path, "r", encoding=encoding) as f:
-        return list(yaml.safe_load_all(f))
+    """Load all documents from a multi-document YAML file (local or URI)."""
+    content = _read_text(yaml_file, encoding)
+    return list(yaml.safe_load_all(content))
 
 
 def dump_yaml_all(
@@ -225,22 +188,9 @@ def dump_yaml_all(
     encoding: str = "utf-8",
     sort_keys: bool = False,
 ) -> None:
-    """Write multiple documents to a YAML file.
-
-    Args:
-        objects: List of Python objects to serialize.
-        yaml_file: Destination file path.
-        encoding: File encoding (default: utf-8).
-        sort_keys: If True, sort dictionary keys.
-
-    Raises:
-        yaml.YAMLError: If an object cannot be serialized.
-    """
-    file_path = _to_path(yaml_file)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(file_path, "w", encoding=encoding) as f:
-        yaml.dump_all(objects, f, sort_keys=sort_keys, allow_unicode=True)
+    """Write multiple documents to a YAML file (local or URI)."""
+    content = yaml.dump_all(objects, sort_keys=sort_keys, allow_unicode=True)
+    _write_text(yaml_file, content, encoding=encoding)
 
 
 def update_yaml_key(
@@ -249,23 +199,9 @@ def update_yaml_key(
     value: Any,
     encoding: str = "utf-8",
 ) -> None:
-    """Update or add a top-level key in a YAML file.
-
-    This preserves the existing file content and adds/updates the key.
-    Note: This is a simple implementation that appends to the file.
-
-    Args:
-        yaml_file: Path to the YAML file.
-        key: Key to update or add.
-        value: Value to set.
-        encoding: File encoding (default: utf-8).
-
-    Raises:
-        FileNotFoundError: If the YAML file does not exist.
-    """
-    file_path = _to_path(yaml_file)
-
-    if not file_path.exists():
+    """Update or add a top-level key in a YAML file (local or URI)."""
+    from .ops import exists
+    if not exists(yaml_file):
         raise FileNotFoundError(f"YAML file not found: {yaml_file}")
 
     data = load_yaml_safe(yaml_file, encoding)
@@ -281,31 +217,16 @@ def override_yaml_top_key(
     key: str,
     value: Any,
 ) -> None:
-    """Append or update a key-value pair at the top level of a YAML file.
-
-    This is a legacy function that appends directly to the file.
-    Consider using update_yaml_key() for safer operations.
-
-    Args:
-        yaml_file: Path to the YAML file to modify.
-        key: Key to add or update.
-        value: Value to set.
-
-    Raises:
-        FileNotFoundError: If the YAML file does not exist.
-    """
-    file_path = _to_path(yaml_file)
-
-    if not file_path.exists():
+    """Append a key-value pair at the top level of a YAML file (local or URI)."""
+    from .ops import exists
+    if not exists(yaml_file):
         raise FileNotFoundError(f"YAML file not found: {yaml_file}")
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    lines.append(f"\n{key}: {value}\n")
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+    content = _read_text(yaml_file, "utf-8")
+    if content and not content.endswith("\n"):
+        content += "\n"
+    content += f"\n{key}: {value}\n"
+    _write_text(yaml_file, content, "utf-8")
 
 
 def merge(base: dict, update: dict, deep: bool = True) -> dict:

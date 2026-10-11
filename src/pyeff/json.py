@@ -3,6 +3,7 @@
 This module provides simplified JSON file operations with:
 - Type hints for better IDE support
 - Proper exception handling
+- URI path support via unified ops (local, docker, ssh, s3, archive, ...)
 - Optional async support (requires aiofiles)
 """
 
@@ -12,10 +13,12 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Union
 
-PathLike = Union[str, Path]
+from .uri import URIPath, looks_like_uri
+
+PathLike = Union[str, Path, URIPath]
 
 
-def _to_path(p: PathLike) -> Path:
+def _to_path(p: Union[str, Path]) -> Path:
     """Convert string or Path to Path object."""
     return Path(p) if not isinstance(p, Path) else p
 
@@ -24,7 +27,7 @@ def load_json(path: PathLike, encoding: str = "utf-8") -> Any:
     """Load and parse a JSON file.
 
     Args:
-        path: Path to the JSON file.
+        path: Path to the JSON file (local path or URI).
         encoding: File encoding (default: utf-8).
 
     Returns:
@@ -33,13 +36,16 @@ def load_json(path: PathLike, encoding: str = "utf-8") -> Any:
     Raises:
         FileNotFoundError: If the file does not exist.
         json.JSONDecodeError: If the file contains invalid JSON.
-    """
-    file_path = _to_path(path)
-    if not file_path.exists():
-        raise FileNotFoundError(f"JSON file not found: {path}")
 
-    with open(file_path, "r", encoding=encoding) as f:
-        return json.load(f)
+    Example:
+        >>> load_json("config.json")
+        >>> load_json("local:./config.json")
+        >>> load_json("archive:./data.zip:/config.json")
+        >>> load_json("s3://bucket/config.json")
+    """
+    from .ops import read
+    content = read(path, encoding=encoding)
+    return json.loads(content)
 
 
 def dump_json(
@@ -54,7 +60,7 @@ def dump_json(
 
     Args:
         obj: Python object to serialize.
-        path: Destination file path.
+        path: Destination file path (local path or URI).
         encoding: File encoding (default: utf-8).
         indent: Number of spaces for indentation (default: 2).
         ensure_ascii: If True, escape non-ASCII characters (default: False).
@@ -63,11 +69,11 @@ def dump_json(
     Raises:
         TypeError: If the object is not JSON serializable.
     """
-    file_path = _to_path(path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(file_path, "w", encoding=encoding) as f:
-        json.dump(obj, f, indent=indent, ensure_ascii=ensure_ascii, sort_keys=sort_keys)
+    from .ops import write
+    content = json.dumps(
+        obj, indent=indent, ensure_ascii=ensure_ascii, sort_keys=sort_keys
+    )
+    write(path, content, encoding=encoding)
 
 
 def loads(s: str) -> Any:
@@ -136,21 +142,15 @@ try:
     async def load_json_async(path: PathLike, encoding: str = "utf-8") -> Any:
         """Asynchronously load and parse a JSON file.
 
-        Args:
-            path: Path to the JSON file.
-            encoding: File encoding (default: utf-8).
-
-        Returns:
-            Parsed JSON data.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
-            json.JSONDecodeError: If the file contains invalid JSON.
-
         Note:
             Requires the 'aiofiles' package: pip install pyeff[async]
+            URI backends fall back to synchronous ops.read.
         """
-        file_path = _to_path(path)
+        if isinstance(path, URIPath) or (isinstance(path, str) and looks_like_uri(path)):
+            from .ops import read
+            return json.loads(read(path, encoding=encoding))
+
+        file_path = _to_path(path)  # type: ignore[arg-type]
         if not file_path.exists():
             raise FileNotFoundError(f"JSON file not found: {path}")
 
@@ -168,24 +168,19 @@ try:
     ) -> None:
         """Asynchronously write an object to a JSON file.
 
-        Args:
-            obj: Python object to serialize.
-            path: Destination file path.
-            encoding: File encoding (default: utf-8).
-            indent: Number of spaces for indentation (default: 2).
-            ensure_ascii: If True, escape non-ASCII characters.
-            sort_keys: If True, sort dictionary keys.
-
-        Raises:
-            TypeError: If the object is not JSON serializable.
-
         Note:
             Requires the 'aiofiles' package: pip install pyeff[async]
+            URI backends fall back to synchronous ops.write.
         """
-        file_path = _to_path(path)
+        content = json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii, sort_keys=sort_keys)
+        if isinstance(path, URIPath) or (isinstance(path, str) and looks_like_uri(path)):
+            from .ops import write
+            write(path, content, encoding=encoding)
+            return
+
+        file_path = _to_path(path)  # type: ignore[arg-type]
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        content = json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii, sort_keys=sort_keys)
         async with aiofiles.open(file_path, "w", encoding=encoding) as f:
             await f.write(content)
 

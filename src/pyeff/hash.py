@@ -79,37 +79,48 @@ def hash_file(
     algorithm: Algorithm = "sha256",
     chunk_size: int = 8192,
 ) -> str:
-    """Generate a hash of a file.
+    """Generate a hash of a file (local path or URI).
 
-    Args:
-        file_path: Path to the file to hash.
-        algorithm: Hash algorithm to use.
-        chunk_size: Size of chunks to read (default: 8192).
-
-    Returns:
-        Hexadecimal hash digest.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-        ValueError: If the algorithm is not supported.
+    Local files are hashed in chunks. Remote / archive URIs are read via
+    unified ops then hashed in memory.
     """
-    path = _to_path(file_path)
-
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    if not path.is_file():
-        raise ValueError(f"Path is not a file: {file_path}")
+    from .uri import resolve_path, LocalPath, looks_like_uri, URIPath
 
     try:
         hasher = hashlib.new(algorithm)
     except ValueError:
         raise ValueError(f"Unsupported algorithm: {algorithm}")
 
-    with open(path, "rb") as f:
-        while chunk := f.read(chunk_size):
-            hasher.update(chunk)
+    is_uri = isinstance(file_path, URIPath) or (
+        isinstance(file_path, str) and looks_like_uri(file_path)
+    )
+    if not is_uri and not isinstance(file_path, URIPath):
+        # Bare path or Path — try local chunked read first
+        path = _to_path(file_path)  # type: ignore[arg-type]
+        if path.exists():
+            if not path.is_file():
+                raise ValueError(f"Path is not a file: {file_path}")
+            with open(path, "rb") as f:
+                while chunk := f.read(chunk_size):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
 
+    uri_path = resolve_path(file_path)
+    if isinstance(uri_path, LocalPath):
+        path = _to_path(uri_path.path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        if not path.is_file():
+            raise ValueError(f"Path is not a file: {file_path}")
+        with open(path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    from .ops import read
+    data = read(uri_path, binary=True)
+    assert isinstance(data, bytes)
+    hasher.update(data)
     return hasher.hexdigest()
 
 
