@@ -3,7 +3,8 @@
 This library provides simplified APIs for common operations:
 - fs / local: File system operations (copy, move, remove, search)
 - archive: Archive operations (compress/pack, extract/unpack)
-- remote: Remote operations (docker, ssh) with unified copy API
+- remote: Remote operations (docker, ssh)
+- uri: URI-based paths for unified operations
 - json: JSON file reading and writing
 - yaml: YAML file handling with include support
 - lines: Text line manipulation and parsing
@@ -13,22 +14,21 @@ This library provides simplified APIs for common operations:
 - git: Git repository utilities
 - indent: Indentation detection and manipulation
 
-Unified API Design:
-    >>> from pyeff import local, archive
-    >>> from pyeff.remote import docker, ssh
+Unified API with URI Paths:
+    >>> from pyeff import copy
+    >>> from pyeff.uri import local, docker, ssh, archive
     >>> 
-    >>> # All use consistent copy(src, dst) pattern
-    >>> local.copy("./src", "./dst")
-    >>> archive.copy("./data", "backup.zip")     # compress
-    >>> archive.copy("backup.zip", "./restore")  # extract
+    >>> # URI strings (simple cases)
+    >>> copy("local:./src", "local:./dst")
+    >>> copy("docker:my-container:/logs", "local:./logs")
+    >>> copy("local:./data", "archive:./backup.zip")
     >>> 
-    >>> with docker("my-container") as d:
-    ...     d.copy("/app/logs", "./logs")        # container → local
-    ...     d.copy("./config", "/app/config")    # local → container
+    >>> # Path builders (complex cases)
+    >>> copy(local("./src"), docker("container", "/app"))
+    >>> copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
     >>> 
-    >>> with ssh("user@host") as s:
-    ...     s.copy("/var/log", "./logs")         # remote → local
-    ...     s.copy("./data", "/remote/data")     # local → remote
+    >>> # Mixed usage
+    >>> copy("local:./config", docker("my-container", "/app/config"))
 """
 
 from __future__ import annotations
@@ -40,7 +40,9 @@ __email__ = "fanfeilong@gmail.com"
 from . import archive
 from . import fs
 from . import local
+from . import ops
 from . import remote
+from . import uri
 from . import git
 from . import hash
 from . import indent
@@ -50,6 +52,10 @@ from . import logger
 from . import shell
 from . import yaml
 
+# Unified copy function (URI-based)
+from .ops import copy as ucopy, CopyError
+
+# Local fs copy (for backwards compatibility, also available as fs.copy)
 from .fs import (
     clear_pattern_cache,
     copy,
@@ -195,9 +201,14 @@ __all__ = [
     "lines",
     "local",
     "logger",
+    "ops",
     "remote",
     "shell",
+    "uri",
     "yaml",
+    # Unified copy (URI-based)
+    "ucopy",
+    "CopyError",
     # fs exports
     "copy",
     "current_dir",
