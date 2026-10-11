@@ -44,7 +44,7 @@ pyeff provides **unified operations** that work across all backends using URI-st
 
 ```python
 from pyeff import copy, remove, search, exists, read, write, move, listdir
-from pyeff.uri import local, docker, ssh, archive
+from pyeff.uri import local, docker, ssh, k8s, archive
 
 # Copy
 copy("local:./src", "local:./dst")
@@ -81,6 +81,12 @@ move("docker:my-container:/tmp/data", "local:./data")
 
 # Path builders (with options)
 copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
+copy(k8s("my-pod", "/data", namespace="prod"), local("./backup"))
+
+# Kubernetes
+copy("k8s:prod/my-pod:/app/logs", "local:./logs")
+copy("local:./config", "k8s:prod/my-pod/app:/app/config")
+remove("k8s:my-pod:/tmp/cache")
 ```
 
 ### URI Format
@@ -91,6 +97,9 @@ copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
 | Docker | `docker:container:/path` | `docker:my-app:/var/log` |
 | SSH | `ssh:user@host:/path` | `ssh:admin@server:/etc` |
 | SSH (port) | `ssh:user@host:port:/path` | `ssh:admin@server:2222:/data` |
+| K8s | `k8s:pod:/path` | `k8s:my-pod:/app/logs` |
+| K8s (ns) | `k8s:ns/pod:/path` | `k8s:prod/my-pod:/app/logs` |
+| K8s (container) | `k8s:ns/pod/ctr:/path` | `k8s:prod/my-pod/app:/var/log` |
 | Archive | `archive:./path.zip` | `archive:./backup.tar.gz` |
 | Archive (inner) | `archive:./path.zip:/inner` | `archive:./data.zip:/config.json` |
 
@@ -99,12 +108,12 @@ copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
 | Operation | Description | Supported Backends |
 |-----------|-------------|-------------------|
 | `copy(src, dst)` | Copy files | all |
-| `remove(path)` | Remove files/dirs | local, docker, ssh |
-| `search(path)` | Search files | local, docker, ssh, archive |
+| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s |
+| `search(path)` | Search files | local, docker, ssh, k8s, archive |
 | `exists(path)` | Check existence | all |
-| `listdir(path)` | List directory | local, docker, ssh, archive |
+| `listdir(path)` | List directory | local, docker, ssh, k8s, archive |
 | `read(path)` | Read file content | all |
-| `write(path, content)` | Write file content | local, docker, ssh |
+| `write(path, content)` | Write file content | local, docker, ssh, k8s |
 | `move(src, dst)` | Move files | all (cross-backend via copy+remove) |
 
 ## Quick Start
@@ -341,44 +350,46 @@ compress("./src", "backup.zip", progress=on_progress)
 
 **Supported formats**: `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`, `.tar.xz`/`.txz`
 
-### pyeff.remote - Remote File Operations (Docker/SSH)
+### pyeff.remote - Remote File Operations (Docker/SSH/K8s)
 
-pyeff.remote provides a **unified API** across Docker and SSH with automatic direction detection:
+pyeff.remote provides a **unified API** across Docker, SSH, and Kubernetes:
 
 ```python
-from pyeff.remote import docker, ssh
+from pyeff.remote import docker, ssh, k8s
 
-# Docker operations with unified copy()
+# Docker
 with docker("my-container") as d:
-    # Direction auto-detected: absolute path (/) = container, relative (./) = local
     d.copy("/app/logs", "./logs")           # container → local
     d.copy("./config", "/app/config")       # local → container
-    d.copy("/data", "./data", mode="include", patterns=["*.csv"])
-    
-    # Other operations
-    d.search("/logs", patterns=["*.log"])
-    d.remove("/tmp/cache")
-    d.exists("/app/config.json")
-    content = d.read_text("/app/config.json")
-    d.write_text("/app/settings.json", '{"key": "value"}')
 
-# SSH operations with the same API (requires: pip install pyeff[ssh])
+# SSH (requires: pip install pyeff[ssh])
 with ssh("user@server.com", key_file="~/.ssh/id_rsa") as s:
-    # Same unified copy() with direction auto-detection
     s.copy("/var/log", "./logs")            # remote → local
     s.copy("./config", "/etc/myapp/")       # local → remote
-    s.copy("/var/log", "./logs", patterns=["*.log"])
-    
-    # Same operations as Docker
-    files = s.search("/data", patterns=["*.csv"])
-    items = s.listdir("/home/user")
-    content = s.read_text("/etc/config")
-    s.write_text("/tmp/output.txt", "Hello World")
-    s.remove("/tmp/cache", recursive=True)
 
-# Password authentication
-with ssh("user@server.com", password="secret") as s:
-    s.copy("/data", "./backup")
+# Kubernetes (requires kubectl in PATH)
+with k8s("my-pod", namespace="prod") as k:
+    k.copy("/app/logs", "./logs")           # pod → local
+    k.copy("./config", "/app/config")       # local → pod
+    files = k.search("/data", patterns=["*.csv"])
+    content = k.read_text("/app/config.json")
+
+# Compact pod specs: namespace/pod or namespace/pod/container
+with k8s("prod/my-pod/app") as k:
+    k.copy("/var/log", "./logs")
+```
+
+Or via unified URI API:
+
+```python
+from pyeff import copy, remove, search, read
+from pyeff.uri import k8s, local
+
+copy("k8s:prod/my-pod:/app/logs", "local:./logs")
+copy("local:./config", "k8s:prod/my-pod/app:/app/config")
+copy(k8s("my-pod", "/data", namespace="prod", container="app"), local("./backup"))
+remove("k8s:my-pod:/tmp/cache")
+search("k8s:prod/my-pod:/logs", mode="include", patterns=["*.log"])
 ```
 
 **Explicit direction** (if you prefer):

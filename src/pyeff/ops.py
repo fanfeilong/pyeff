@@ -38,6 +38,7 @@ from .uri import (
     LocalPath,
     DockerPath,
     SSHPath,
+    K8sPath,
     ArchivePath,
     resolve_path,
 )
@@ -155,16 +156,24 @@ def _get_copy_handler(src: URIPath, dst: URIPath):
         ("local", "local"): _copy_local_to_local,
         ("local", "docker"): _copy_local_to_docker,
         ("local", "ssh"): _copy_local_to_ssh,
+        ("local", "k8s"): _copy_local_to_k8s,
         ("local", "archive"): _copy_local_to_archive,
         ("docker", "local"): _copy_docker_to_local,
         ("docker", "docker"): _copy_docker_to_docker,
         ("docker", "ssh"): _copy_docker_to_ssh,
+        ("docker", "k8s"): _copy_via_temp,
         ("ssh", "local"): _copy_ssh_to_local,
         ("ssh", "docker"): _copy_ssh_to_docker,
         ("ssh", "ssh"): _copy_ssh_to_ssh,
+        ("ssh", "k8s"): _copy_via_temp,
+        ("k8s", "local"): _copy_k8s_to_local,
+        ("k8s", "docker"): _copy_via_temp,
+        ("k8s", "ssh"): _copy_via_temp,
+        ("k8s", "k8s"): _copy_via_temp,
         ("archive", "local"): _copy_archive_to_local,
         ("archive", "docker"): _copy_archive_to_docker,
         ("archive", "ssh"): _copy_archive_to_ssh,
+        ("archive", "k8s"): _copy_archive_to_k8s,
     }
     
     handler = handlers.get(key)
@@ -221,6 +230,22 @@ def _copy_local_to_ssh(
         return ssh.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
 
 
+def _copy_local_to_k8s(
+    src: LocalPath,
+    dst: K8sPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy local to Kubernetes pod."""
+    from .remote.k8s import K8sRemote
+    
+    params = dst.get_connection_params()
+    with K8sRemote(**params) as k:
+        return k.copy_to(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
 def _copy_local_to_archive(
     src: LocalPath,
     dst: ArchivePath,
@@ -239,6 +264,42 @@ def _copy_local_to_archive(
         archive_path.unlink()
     
     return compress(src.path, dst.archive_path, mode=mode, patterns=patterns, progress=progress)
+
+
+def _open_remote(path: URIPath):
+    """Open a remote backend context manager for a URI path."""
+    if isinstance(path, DockerPath):
+        from .remote.docker import DockerRemote
+        return DockerRemote(path.container)
+    elif isinstance(path, SSHPath):
+        from .remote.ssh import SSHRemote
+        return SSHRemote(**path.get_connection_params())
+    elif isinstance(path, K8sPath):
+        from .remote.k8s import K8sRemote
+        return K8sRemote(**path.get_connection_params())
+    else:
+        raise CopyError(f"Not a remote path: {path.scheme}")
+
+
+def _copy_via_temp(
+    src: URIPath,
+    dst: URIPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy between remotes via local temp directory."""
+    import tempfile
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with _open_remote(src) as src_remote:
+            src_remote.copy_from(src.path, temp_dir, mode=mode, patterns=patterns)
+        
+        with _open_remote(dst) as dst_remote:
+            return dst_remote.copy_to(
+                temp_dir, dst.path, mode=mode, patterns=patterns, progress=progress
+            )
 
 
 # Docker operations
@@ -350,17 +411,25 @@ def _copy_ssh_to_ssh(
     progress: Optional[ProgressCallback],
 ) -> int:
     """Copy between SSH remotes (via local temp)."""
-    import tempfile
-    from .remote.ssh import SSHRemote
+    return _copy_via_temp(src, dst, mode, patterns, overwrite, progress)
+
+
+# K8s operations
+
+def _copy_k8s_to_local(
+    src: K8sPath,
+    dst: LocalPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy Kubernetes pod to local."""
+    from .remote.k8s import K8sRemote
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-        src_params = src.get_connection_params()
-        with SSHRemote(**src_params) as src_ssh:
-            src_ssh.copy_from(src.path, temp_dir, mode=mode, patterns=patterns)
-        
-        dst_params = dst.get_connection_params()
-        with SSHRemote(**dst_params) as dst_ssh:
-            return dst_ssh.copy_to(temp_dir, dst.path, mode=mode, patterns=patterns, progress=progress)
+    params = src.get_connection_params()
+    with K8sRemote(**params) as k:
+        return k.copy_from(src.path, dst.path, mode=mode, patterns=patterns, progress=progress)
 
 
 # Archive operations
@@ -426,6 +495,27 @@ def _copy_archive_to_ssh(
             return ssh.copy_to(temp_dir, dst.path, mode=mode, patterns=patterns, progress=progress)
 
 
+def _copy_archive_to_k8s(
+    src: ArchivePath,
+    dst: K8sPath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Copy archive to Kubernetes pod (extract then copy)."""
+    import tempfile
+    from .archive import extract
+    from .remote.k8s import K8sRemote
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract(src.archive_path, temp_dir, mode=mode, patterns=patterns, overwrite=True)
+        
+        params = dst.get_connection_params()
+        with K8sRemote(**params) as k:
+            return k.copy_to(temp_dir, dst.path, mode=mode, patterns=patterns, progress=progress)
+
+
 def remove(
     path: Union[str, URIPath],
     mode: Mode = "all",
@@ -466,6 +556,12 @@ def remove(
         params = uri_path.get_connection_params()
         with SSHRemote(**params) as ssh:
             return ssh.remove(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
+    
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            return k.remove(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
     elif isinstance(uri_path, ArchivePath):
         raise RemoveError("Cannot remove from archive directly")
@@ -513,6 +609,12 @@ def search(
         with SSHRemote(**params) as ssh:
             return ssh.search(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
     
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            return k.search(uri_path.path, mode=mode, patterns=patterns, recursive=recursive)
+    
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
         members = list_archive(uri_path.archive_path, mode=mode, patterns=patterns)
@@ -551,6 +653,12 @@ def exists(path: Union[str, URIPath]) -> bool:
         params = uri_path.get_connection_params()
         with SSHRemote(**params) as ssh:
             return ssh.exists(uri_path.path)
+    
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            return k.exists(uri_path.path)
     
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
@@ -622,6 +730,16 @@ def listdir(
                 is_dir=i.is_dir, is_file=i.is_file
             ) for i in items]
     
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            items = k.listdir(uri_path.path, mode=mode, patterns=patterns)
+            return [FileInfo(
+                name=i.name, path=i.path, size=i.size,
+                is_dir=i.is_dir, is_file=i.is_file
+            ) for i in items]
+    
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
         members = list_archive(uri_path.archive_path, mode=mode, patterns=patterns)
@@ -677,6 +795,14 @@ def read(
             if binary:
                 return ssh.read_bytes(uri_path.path)
             return ssh.read_text(uri_path.path, encoding=encoding)
+    
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            if binary:
+                return k.read_bytes(uri_path.path)
+            return k.read_text(uri_path.path, encoding=encoding)
     
     elif isinstance(uri_path, ArchivePath):
         from .archive import extract_file
@@ -734,6 +860,15 @@ def write(
                 ssh.write_bytes(uri_path.path, content)
             else:
                 ssh.write_text(uri_path.path, content, encoding=encoding)
+    
+    elif isinstance(uri_path, K8sPath):
+        from .remote.k8s import K8sRemote
+        params = uri_path.get_connection_params()
+        with K8sRemote(**params) as k:
+            if isinstance(content, bytes):
+                k.write_bytes(uri_path.path, content)
+            else:
+                k.write_text(uri_path.path, content, encoding=encoding)
     
     elif isinstance(uri_path, ArchivePath):
         raise WriteError("Cannot write to archive directly. Use copy() to create archives.")
