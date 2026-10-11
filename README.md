@@ -222,6 +222,62 @@ compress("./src", "backup.zip", progress=on_progress)
 
 **Supported formats**: `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`, `.tar.xz`/`.txz`
 
+### pyeff.remote - Remote File Operations (Docker/SSH)
+
+```python
+# Docker container operations
+from pyeff.remote import docker_copy, docker_search, docker_remove
+
+# Copy from container to local (with pattern filtering)
+docker_copy("my-container:/app/logs", "./logs")
+docker_copy("my-container:/data", "./data", mode="include", patterns=["*.csv"])
+
+# Copy from local to container
+docker_copy("./config", "my-container:/app/config")
+
+# Search files in container
+files = docker_search("my-container:/logs", patterns=["*.log"])
+
+# Remove files in container
+docker_remove("my-container:/tmp/cache")
+docker_remove("my-container:/logs", mode="include", patterns=["*.tmp"])
+
+# Using context manager for multiple operations
+from pyeff.remote import DockerRemote
+
+with DockerRemote("my-container") as docker:
+    docker.copy_from("/app/logs", "./logs")
+    docker.remove("/tmp/cache")
+    content = docker.read_text("/app/config.json")
+    docker.write_text("/app/settings.json", '{"key": "value"}')
+```
+
+```python
+# SSH/SFTP operations (requires: pip install pyeff[ssh])
+from pyeff.remote import SSHRemote, ssh_connect
+
+# Using context manager
+with ssh_connect("user@server.com", key_file="~/.ssh/id_rsa") as ssh:
+    # Same API as local fs operations
+    ssh.copy_from("/var/log", "./logs", patterns=["*.log"])
+    ssh.copy_to("./config", "/etc/myapp/")
+    
+    # Search and list
+    files = ssh.search("/data", patterns=["*.csv"])
+    items = ssh.listdir("/home/user")
+    
+    # Read/write
+    content = ssh.read_text("/etc/config")
+    ssh.write_text("/tmp/output.txt", "Hello World")
+    
+    # Remove
+    ssh.remove("/tmp/cache", recursive=True)
+
+# With password authentication
+with ssh_connect("user@server.com", password="secret") as ssh:
+    ssh.copy_from("/data", "./backup")
+```
+
 ### pyeff.git - Git Utilities
 
 ```python

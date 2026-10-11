@@ -20,6 +20,7 @@ __email__ = "fanfeilong@gmail.com"
 
 from . import archive
 from . import fs
+from . import remote
 from . import git
 from . import hash
 from . import indent
@@ -235,6 +236,7 @@ __all__ = [
     "list_archive_iter",
     "ArchiveError",
     "ArchiveInfo",
+    "remote",
     "logger_blank",
     "logger_dict",
     "logger_file_info",
