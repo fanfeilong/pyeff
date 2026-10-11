@@ -9,18 +9,23 @@ URI Format:
     docker:container-name:/path/in/container
     ssh:user@host:/path/on/remote
     ssh:user@host:2222:/path  (with port)
+    k8s:pod:/path
+    k8s:namespace/pod:/path
+    k8s:namespace/pod/container:/path
     archive:./backup.zip
     archive:./backup.zip:/inner/path
 
 Example:
     >>> from pyeff import copy
-    >>> from pyeff.uri import local, docker, ssh, archive
+    >>> from pyeff.uri import local, docker, ssh, k8s, archive
     >>> 
     >>> # URI strings (simple cases)
     >>> copy("local:./src", "docker:my-container:/app")
+    >>> copy("k8s:prod/my-pod:/app/logs", "local:./logs")
     >>> 
     >>> # Path builders (complex cases with options)
     >>> copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
+    >>> copy(k8s("my-pod", "/data", namespace="prod"), local("./backup"))
     >>> 
     >>> # Mixed usage
     >>> copy("local:./config", docker("my-container", "/app/config"))
@@ -168,6 +173,63 @@ class SSHPath(URIPath):
 
 
 @dataclass
+class K8sPath(URIPath):
+    """Kubernetes pod path.
+    
+    URI Format:
+        k8s:pod:/path
+        k8s:namespace/pod:/path
+        k8s:namespace/pod/container:/path
+    
+    Example:
+        >>> p = K8sPath("my-pod", "/app/data")
+        >>> p.to_uri()
+        'k8s:my-pod:/app/data'
+        
+        >>> p = K8sPath("my-pod", "/app/data", namespace="prod", container="app")
+        >>> p.to_uri()
+        'k8s:prod/my-pod/app:/app/data'
+    """
+    
+    pod: str
+    path: str
+    namespace: Optional[str] = None
+    container: Optional[str] = None
+    context: Optional[str] = None
+    
+    @property
+    def scheme(self) -> str:
+        return "k8s"
+    
+    def _pod_spec(self) -> str:
+        """Build pod spec string for URI."""
+        if self.namespace and self.container:
+            return f"{self.namespace}/{self.pod}/{self.container}"
+        elif self.namespace and self.namespace != "default":
+            return f"{self.namespace}/{self.pod}"
+        elif self.container:
+            return f"{self.namespace or 'default'}/{self.pod}/{self.container}"
+        return self.pod
+    
+    def to_uri(self) -> str:
+        return f"k8s:{self._pod_spec()}:{self.path}"
+    
+    def __str__(self) -> str:
+        return f"{self._pod_spec()}:{self.path}"
+    
+    def get_connection_params(self) -> Dict[str, Any]:
+        """Get connection parameters for K8sRemote."""
+        params: Dict[str, Any] = {"pod": self.pod}
+        if self.namespace:
+            params["namespace"] = self.namespace
+        if self.container:
+            params["container"] = self.container
+        if self.context:
+            params["context"] = self.context
+        return params
+
+
+@dataclass
 class ArchivePath(URIPath):
     """Archive file path.
     
@@ -284,6 +346,50 @@ def ssh(
     )
 
 
+def k8s(
+    pod: str,
+    path: str,
+    namespace: Optional[str] = None,
+    container: Optional[str] = None,
+    context: Optional[str] = None,
+) -> K8sPath:
+    """Create a Kubernetes pod path.
+    
+    Args:
+        pod: Pod name (or "namespace/pod" / "namespace/pod/container").
+        path: Path inside the pod.
+        namespace: Kubernetes namespace (default: "default").
+        container: Container name within the pod.
+        context: kubectl context.
+        
+    Returns:
+        K8sPath object.
+        
+    Example:
+        >>> from pyeff.uri import k8s
+        >>> k8s("my-pod", "/app/data")
+        K8sPath('k8s:my-pod:/app/data')
+        
+        >>> k8s("my-pod", "/app/data", namespace="prod", container="app")
+        K8sPath('k8s:prod/my-pod/app:/app/data')
+    """
+    # Allow compact pod specs: "ns/pod" or "ns/pod/ctr"
+    if "/" in pod and namespace is None and container is None:
+        parts = pod.split("/")
+        if len(parts) == 2:
+            namespace, pod = parts[0], parts[1]
+        elif len(parts) == 3:
+            namespace, pod, container = parts[0], parts[1], parts[2]
+    
+    return K8sPath(
+        pod=pod,
+        path=path,
+        namespace=namespace,
+        container=container,
+        context=context,
+    )
+
+
 def archive(
     archive_path: PathLike,
     inner_path: Optional[str] = None,
@@ -310,9 +416,11 @@ def archive(
 
 # URI parsing
 
-_URI_PATTERN = re.compile(r'^([a-z]+):(.+)$')
+_URI_PATTERN = re.compile(r'^([a-z0-9]+):(.+)$')
 _DOCKER_PATH_PATTERN = re.compile(r'^([^:]+):(.+)$')
 _SSH_PATH_PATTERN = re.compile(r'^([^:]+?)(?::(\d+))?:(.+)$')
+# k8s: pod:/path | ns/pod:/path | ns/pod/ctr:/path
+_K8S_PATH_PATTERN = re.compile(r'^((?:[^:/]+/)?[^:/]+(?:/[^:/]+)?):(.+)$')
 _ARCHIVE_INNER_PATTERN = re.compile(r'^(.+?\.(?:zip|tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz)):(.+)$', re.I)
 
 
@@ -368,6 +476,32 @@ def parse_uri(uri: str) -> URIPath:
         port = int(port_str) if port_str else None
         return SSHPath(host, path, port=port)
     
+    elif scheme == "k8s":
+        k8s_match = _K8S_PATH_PATTERN.match(rest)
+        if not k8s_match:
+            raise ValueError(
+                f"Invalid k8s URI: {uri!r}. "
+                f"Expected format: k8s:pod:/path, k8s:ns/pod:/path, "
+                f"or k8s:ns/pod/container:/path"
+            )
+        pod_spec, path = k8s_match.groups()
+        parts = pod_spec.split("/")
+        if len(parts) == 1:
+            return K8sPath(pod=parts[0], path=path)
+        elif len(parts) == 2:
+            return K8sPath(pod=parts[1], path=path, namespace=parts[0])
+        elif len(parts) == 3:
+            return K8sPath(
+                pod=parts[1], path=path,
+                namespace=parts[0], container=parts[2],
+            )
+        else:
+            raise ValueError(
+                f"Invalid k8s URI: {uri!r}. "
+                f"Expected format: k8s:pod:/path, k8s:ns/pod:/path, "
+                f"or k8s:ns/pod/container:/path"
+            )
+    
     elif scheme == "archive":
         inner_match = _ARCHIVE_INNER_PATTERN.match(rest)
         if inner_match:
@@ -405,10 +539,12 @@ __all__ = [
     "LocalPath",
     "DockerPath",
     "SSHPath",
+    "K8sPath",
     "ArchivePath",
     "local",
     "docker",
     "ssh",
+    "k8s",
     "archive",
     "parse_uri",
     "resolve_path",
