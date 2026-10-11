@@ -43,21 +43,21 @@ pip install pyeff[dev]
 pyeff provides a **unified `copy()` function** that works across all backends using URI-style paths:
 
 ```python
-from pyeff import ucopy  # Unified copy
+from pyeff import copy
 from pyeff.uri import local, docker, ssh, archive
 
 # URI strings (simple cases)
-ucopy("local:./src", "local:./dst")
-ucopy("docker:my-container:/app/logs", "local:./logs")
-ucopy("local:./data", "archive:./backup.zip")
-ucopy("archive:./backup.zip", "local:./restore")
+copy("local:./src", "local:./dst")
+copy("docker:my-container:/app/logs", "local:./logs")
+copy("local:./data", "archive:./backup.zip")
+copy("archive:./backup.zip", "local:./restore")
 
 # Path builders (complex cases with options)
-ucopy(local("./src"), docker("container", "/app"))
-ucopy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
+copy(local("./src"), docker("container", "/app"))
+copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
 
 # Mixed usage
-ucopy("local:./config", docker("my-container", "/app/config"))
+copy("local:./config", docker("my-container", "/app/config"))
 ```
 
 ### URI Format

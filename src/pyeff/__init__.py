@@ -14,20 +14,20 @@ This library provides simplified APIs for common operations:
 - git: Git repository utilities
 - indent: Indentation detection and manipulation
 
-Unified API with URI Paths:
+Unified copy() with URI Paths:
     >>> from pyeff import copy
     >>> from pyeff.uri import local, docker, ssh, archive
     >>> 
-    >>> # URI strings (simple cases)
+    >>> # URI strings
     >>> copy("local:./src", "local:./dst")
     >>> copy("docker:my-container:/logs", "local:./logs")
     >>> copy("local:./data", "archive:./backup.zip")
+    >>> copy("ssh:user@host:/var/log", "local:./logs")
     >>> 
-    >>> # Path builders (complex cases)
-    >>> copy(local("./src"), docker("container", "/app"))
+    >>> # Path builders (with options)
     >>> copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
     >>> 
-    >>> # Mixed usage
+    >>> # Mixed
     >>> copy("local:./config", docker("my-container", "/app/config"))
 """
 
@@ -52,13 +52,12 @@ from . import logger
 from . import shell
 from . import yaml
 
-# Unified copy function (URI-based)
-from .ops import copy as ucopy, CopyError
+# Unified copy function (URI-based) - this is the primary copy
+from .ops import copy, CopyError
 
-# Local fs copy (for backwards compatibility, also available as fs.copy)
+# Local fs operations (fs.copy still available for direct local operations)
 from .fs import (
     clear_pattern_cache,
-    copy,
     current_dir,
     ensure,
     exists,
@@ -207,10 +206,9 @@ __all__ = [
     "uri",
     "yaml",
     # Unified copy (URI-based)
-    "ucopy",
+    "copy",
     "CopyError",
     # fs exports
-    "copy",
     "current_dir",
     "ensure",
     "exists",
