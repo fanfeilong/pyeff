@@ -15,6 +15,7 @@ from pyeff.remote.base import (
 
 from pyeff.remote.docker import (
     DockerRemote,
+    docker,
     docker_copy,
     docker_search,
     docker_exists,
@@ -221,3 +222,102 @@ class TestRemoteExceptions:
         
         with pytest.raises(RemoteError):
             raise RemoteFileNotFoundError("test")
+
+
+class TestDockerFactory:
+    """Test the docker() factory function."""
+    
+    def test_docker_factory_returns_docker_remote(self):
+        """Test that docker() returns DockerRemote instance."""
+        d = docker("my-container")
+        assert isinstance(d, DockerRemote)
+        assert d.container == "my-container"
+    
+    def test_docker_factory_usage_pattern(self):
+        """Test the intended usage pattern with docker()."""
+        from pyeff.remote import docker as docker_factory
+        
+        d = docker_factory("my-container")
+        assert hasattr(d, "copy")
+        assert hasattr(d, "copy_from")
+        assert hasattr(d, "copy_to")
+        assert hasattr(d, "remove")
+        assert hasattr(d, "search")
+        assert hasattr(d, "exists")
+
+
+class TestUnifiedCopyMethod:
+    """Test the unified copy() method on DockerRemote."""
+    
+    @pytest.fixture
+    def mock_docker(self):
+        """Create a mocked DockerRemote."""
+        with patch("pyeff.remote.docker._run_docker") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+            d = DockerRemote("test-container")
+            d._verified = True
+            yield d, mock_run
+    
+    def test_copy_detects_remote_to_local(self, mock_docker):
+        """Test that copy() detects remote (absolute) → local (relative)."""
+        d, mock_run = mock_docker
+        
+        with patch.object(d, "copy_from") as mock_copy_from:
+            mock_copy_from.return_value = 5
+            result = d.copy("/app/logs", "./logs")
+            
+            mock_copy_from.assert_called_once()
+            args = mock_copy_from.call_args
+            assert args[0][0] == "/app/logs"
+            assert args[0][1] == "./logs"
+    
+    def test_copy_detects_local_to_remote(self, mock_docker):
+        """Test that copy() detects local (relative) → remote (absolute)."""
+        d, mock_run = mock_docker
+        
+        with patch.object(d, "copy_to") as mock_copy_to:
+            mock_copy_to.return_value = 3
+            result = d.copy("./config", "/app/config")
+            
+            mock_copy_to.assert_called_once()
+            args = mock_copy_to.call_args
+            assert args[0][0] == "./config"
+            assert args[0][1] == "/app/config"
+    
+    def test_copy_both_remote_raises(self, mock_docker):
+        """Test that copy() raises when both paths look remote."""
+        d, mock_run = mock_docker
+        
+        with pytest.raises(RemoteError, match="Both paths appear to be container"):
+            d.copy("/app/src", "/app/dst")
+    
+    def test_copy_both_local_raises(self, mock_docker):
+        """Test that copy() raises when both paths look local."""
+        d, mock_run = mock_docker
+        
+        with pytest.raises(RemoteError, match="Both paths appear to be local"):
+            d.copy("./src", "./dst")
+
+
+class TestSSHUnifiedAPI:
+    """Test the unified SSH API if paramiko is available."""
+    
+    def test_ssh_factory_function_exists(self):
+        """Test that ssh() factory function exists."""
+        from pyeff.remote import SSH_AVAILABLE
+        
+        if SSH_AVAILABLE:
+            from pyeff.remote.ssh import ssh
+            
+            assert callable(ssh)
+    
+    def test_ssh_remote_has_copy_method(self):
+        """Test that SSHRemote has unified copy() method."""
+        from pyeff.remote import SSH_AVAILABLE
+        
+        if SSH_AVAILABLE:
+            from pyeff.remote.ssh import SSHRemote
+            
+            assert hasattr(SSHRemote, "copy")
+            assert hasattr(SSHRemote, "copy_from")
+            assert hasattr(SSHRemote, "copy_to")

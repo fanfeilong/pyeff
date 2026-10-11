@@ -7,6 +7,7 @@ A user-friendly Python utility library for daily coding tasks. Provides simplifi
 
 ## Features
 
+- **Unified API**: Consistent `copy(src, dst)` pattern across local, archive, Docker, and SSH
 - **Type Hints**: Full type annotations for better IDE support
 - **Pathlib Support**: All path arguments accept both `str` and `Path`
 - **Proper Exceptions**: Clear error messages with appropriate exception types
@@ -25,10 +26,44 @@ With async support:
 pip install pyeff[async]
 ```
 
+With SSH support:
+
+```bash
+pip install pyeff[ssh]
+```
+
 For development:
 
 ```bash
 pip install pyeff[dev]
+```
+
+## Unified API Design
+
+pyeff provides a **consistent API across all backends** (local, archive, Docker, SSH):
+
+```python
+from pyeff import local, archive
+from pyeff.remote import docker, ssh
+
+# All use the same copy(src, dst) pattern!
+
+# Local file operations
+local.copy("./src", "./dst")
+
+# Archive: direction auto-detected from path types
+archive.copy("./data", "backup.zip")        # compress (dir → archive)
+archive.copy("backup.zip", "./restore")     # extract (archive → dir)
+
+# Docker: direction auto-detected (absolute = container, relative = local)
+with docker("my-container") as d:
+    d.copy("/app/logs", "./logs")           # container → local
+    d.copy("./config", "/app/config")       # local → container
+
+# SSH: same pattern
+with ssh("user@host") as s:
+    s.copy("/var/log", "./logs")            # remote → local
+    s.copy("./data", "/remote/data")        # local → remote
 ```
 
 ## Quick Start
@@ -47,29 +82,52 @@ dump_yaml(config, "config.yml")
 
 ## Modules
 
-### pyeff.fs - File System Operations
+### pyeff.local / pyeff.fs - Local File System Operations
+
+Use `local` module for consistency with `docker` and `ssh`, or `fs` module directly:
+
+```python
+from pyeff import local  # Unified interface
+# or: from pyeff import fs  # Direct access
+
+# Copy with pattern filtering
+local.copy("./src", "./dst", mode="include", patterns=["*.py"])
+local.copy("./src", "./dst", mode="ignore", patterns=["*.pyc", "__pycache__"])
+
+# Remove files/directories
+local.remove("./build")
+local.remove("./src", mode="include", patterns=["*.tmp"])
+
+# Move with patterns
+local.move("./old", "./new", mode="include", patterns=["*.py"])
+
+# Search for files
+py_files = local.search("./src", mode="include", patterns=["*.py"])
+
+# Directory operations
+local.ensure("./path/to/dir")  # Create if not exists
+files = local.listdir("./src")
+print(local.tree("./project"))
+
+# Read/write (matching docker/ssh interface)
+content = local.read_text("./config.txt")
+local.write_text("./output.txt", "Hello World")
+lines = local.read_lines("./data.txt")
+local.write_lines(["line1", "line2"], "./output.txt")
+```
+
+**All operations** (from `pyeff.fs`):
 
 ```python
 from pyeff.fs import copy, move, remove, search, ensure, listdir, tree
 
-# Copy with pattern filtering
-copy("./src", "./dst", mode="include", patterns=["*.py"])
-copy("./src", "./dst", mode="ignore", patterns=["*.pyc", "__pycache__"])
+# Generators for large directories
+from pyeff.fs import search_iter, listdir_iter, walk_iter
 
-# Remove files/directories
-remove("./build")
-remove("./src", mode="include", patterns=["*.tmp"])
-remove(["file1.txt", "file2.txt"])  # Remove multiple
+for file in search_iter("./src", patterns=["*.py"]):
+    process(file)
 
-# Move with patterns
-move("./old", "./new", mode="include", patterns=["*.py"])
-
-# Search for files
-py_files = search("./src", mode="include", patterns=["*.py"])
-
-# Directory operations
-ensure("./path/to/dir")  # Create if not exists
-files = listdir("./src", extensions=[".py", ".txt"])
+# Tree visualization
 print(tree("./project", max_depth=2))
 ```
 
@@ -172,6 +230,26 @@ file_hash = hash_file("large_file.bin")
 
 ### pyeff.archive - Archive Operations (zip/tar)
 
+pyeff.archive provides **unified naming** with `pack`/`unpack` aliases and auto-direction `copy()`:
+
+```python
+from pyeff import archive
+
+# Unified copy() auto-detects direction
+archive.copy("./src", "backup.zip")        # compress (directory → archive)
+archive.copy("backup.zip", "./restore")    # extract (archive → directory)
+
+# pack/unpack aliases (same as compress/extract)
+archive.pack("./src", "backup.zip")
+archive.unpack("backup.zip", "./restore")
+
+# With pattern filtering
+archive.copy("./src", "backup.zip", mode="ignore", patterns=["*.pyc"])
+archive.copy("backup.zip", "./data", mode="include", patterns=["*.csv"])
+```
+
+**Full API**:
+
 ```python
 from pyeff.archive import compress, extract, list_archive, archive_info
 
@@ -224,58 +302,66 @@ compress("./src", "backup.zip", progress=on_progress)
 
 ### pyeff.remote - Remote File Operations (Docker/SSH)
 
+pyeff.remote provides a **unified API** across Docker and SSH with automatic direction detection:
+
 ```python
-# Docker container operations
-from pyeff.remote import docker_copy, docker_search, docker_remove
+from pyeff.remote import docker, ssh
 
-# Copy from container to local (with pattern filtering)
-docker_copy("my-container:/app/logs", "./logs")
-docker_copy("my-container:/data", "./data", mode="include", patterns=["*.csv"])
+# Docker operations with unified copy()
+with docker("my-container") as d:
+    # Direction auto-detected: absolute path (/) = container, relative (./) = local
+    d.copy("/app/logs", "./logs")           # container → local
+    d.copy("./config", "/app/config")       # local → container
+    d.copy("/data", "./data", mode="include", patterns=["*.csv"])
+    
+    # Other operations
+    d.search("/logs", patterns=["*.log"])
+    d.remove("/tmp/cache")
+    d.exists("/app/config.json")
+    content = d.read_text("/app/config.json")
+    d.write_text("/app/settings.json", '{"key": "value"}')
 
-# Copy from local to container
-docker_copy("./config", "my-container:/app/config")
+# SSH operations with the same API (requires: pip install pyeff[ssh])
+with ssh("user@server.com", key_file="~/.ssh/id_rsa") as s:
+    # Same unified copy() with direction auto-detection
+    s.copy("/var/log", "./logs")            # remote → local
+    s.copy("./config", "/etc/myapp/")       # local → remote
+    s.copy("/var/log", "./logs", patterns=["*.log"])
+    
+    # Same operations as Docker
+    files = s.search("/data", patterns=["*.csv"])
+    items = s.listdir("/home/user")
+    content = s.read_text("/etc/config")
+    s.write_text("/tmp/output.txt", "Hello World")
+    s.remove("/tmp/cache", recursive=True)
 
-# Search files in container
-files = docker_search("my-container:/logs", patterns=["*.log"])
-
-# Remove files in container
-docker_remove("my-container:/tmp/cache")
-docker_remove("my-container:/logs", mode="include", patterns=["*.tmp"])
-
-# Using context manager for multiple operations
-from pyeff.remote import DockerRemote
-
-with DockerRemote("my-container") as docker:
-    docker.copy_from("/app/logs", "./logs")
-    docker.remove("/tmp/cache")
-    content = docker.read_text("/app/config.json")
-    docker.write_text("/app/settings.json", '{"key": "value"}')
+# Password authentication
+with ssh("user@server.com", password="secret") as s:
+    s.copy("/data", "./backup")
 ```
 
+**Explicit direction** (if you prefer):
+
 ```python
-# SSH/SFTP operations (requires: pip install pyeff[ssh])
-from pyeff.remote import SSHRemote, ssh_connect
+# You can still use explicit copy_from/copy_to
+with docker("my-container") as d:
+    d.copy_from("/app/logs", "./logs")      # container → local
+    d.copy_to("./config", "/app/config")    # local → container
 
-# Using context manager
-with ssh_connect("user@server.com", key_file="~/.ssh/id_rsa") as ssh:
-    # Same API as local fs operations
-    ssh.copy_from("/var/log", "./logs", patterns=["*.log"])
-    ssh.copy_to("./config", "/etc/myapp/")
-    
-    # Search and list
-    files = ssh.search("/data", patterns=["*.csv"])
-    items = ssh.listdir("/home/user")
-    
-    # Read/write
-    content = ssh.read_text("/etc/config")
-    ssh.write_text("/tmp/output.txt", "Hello World")
-    
-    # Remove
-    ssh.remove("/tmp/cache", recursive=True)
+with ssh("user@host") as s:
+    s.copy_from("/var/log", "./logs")       # remote → local
+    s.copy_to("./config", "/etc/app/")      # local → remote
+```
 
-# With password authentication
-with ssh_connect("user@server.com", password="secret") as ssh:
-    ssh.copy_from("/data", "./backup")
+**Legacy function-based API** (still supported):
+
+```python
+from pyeff.remote import docker_copy, docker_search, docker_remove
+
+docker_copy("my-container:/app/logs", "./logs")
+docker_copy("./config", "my-container:/app/config")
+files = docker_search("my-container:/logs", patterns=["*.log"])
+docker_remove("my-container:/tmp/cache")
 ```
 
 ### pyeff.git - Git Utilities

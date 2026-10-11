@@ -751,3 +751,73 @@ def compress_parallel(
                     progress(arcname, count, total)
 
     return count
+
+
+# Unified aliases for consistent API naming
+pack = compress
+pack_files = compress_files
+pack_parallel = compress_parallel
+unpack = extract
+unpack_file = extract_file
+
+
+def copy(
+    src: PathLike,
+    dst: PathLike,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+    overwrite: bool = False,
+    progress: Optional[ProgressCallback] = None,
+) -> int:
+    """Unified copy that auto-detects direction.
+    
+    - If src is an archive, extract to dst directory
+    - If dst is an archive, compress src to dst
+    
+    Args:
+        src: Source path (file, directory, or archive).
+        dst: Destination path (directory or archive).
+        mode: Filter mode ("all", "include", "ignore").
+        patterns: Glob patterns for filtering.
+        overwrite: Whether to overwrite existing files.
+        progress: Optional progress callback.
+        
+    Returns:
+        Number of files processed.
+        
+    Example:
+        >>> from pyeff import archive
+        >>> 
+        >>> # Extract archive to directory
+        >>> archive.copy("backup.tar.gz", "./restore")
+        >>> 
+        >>> # Compress directory to archive
+        >>> archive.copy("./src", "backup.zip")
+    """
+    src_path = _to_path(src)
+    dst_path = _to_path(dst)
+    
+    src_is_archive = is_archive(src_path)
+    dst_is_archive = is_archive(dst_path) if dst_path.suffix else False
+    
+    if not dst_is_archive:
+        try:
+            _detect_format(dst_path)
+            dst_is_archive = True
+        except ArchiveError:
+            pass
+    
+    if src_is_archive and not dst_is_archive:
+        return extract(src, dst, mode, patterns, overwrite, progress)
+    elif not src_is_archive and dst_is_archive:
+        return compress(src, dst, mode, patterns, progress=progress)
+    elif src_is_archive and dst_is_archive:
+        raise ArchiveError(
+            "Cannot copy between archives directly. "
+            "Extract first, then compress."
+        )
+    else:
+        raise ArchiveError(
+            "Neither source nor destination appears to be an archive. "
+            "Use fs.copy() for regular file operations."
+        )

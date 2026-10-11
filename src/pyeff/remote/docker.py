@@ -409,6 +409,55 @@ class DockerRemote(RemoteBackend):
             _run_docker(["cp", tmp_path, f"{self.container}:{remote_path}"])
         finally:
             os.unlink(tmp_path)
+    
+    def copy(
+        self,
+        src: str,
+        dst: str,
+        mode: Mode = "all",
+        patterns: Optional[List[str]] = None,
+        progress: Optional[ProgressCallback] = None,
+    ) -> int:
+        """Copy files between container and local filesystem.
+        
+        Direction is auto-detected based on path format:
+        - Absolute path (starts with /) = container path
+        - Relative path (starts with . or other) = local path
+        
+        Args:
+            src: Source path (container or local).
+            dst: Destination path (container or local).
+            mode: Filter mode ("all", "include", "ignore").
+            patterns: Glob patterns for filtering.
+            progress: Optional progress callback.
+            
+        Returns:
+            Number of files copied.
+            
+        Example:
+            >>> with docker("my-container") as d:
+            ...     d.copy("/app/logs", "./logs")      # container → local
+            ...     d.copy("./config", "/app/config")  # local → container
+        """
+        src_is_remote = src.startswith("/")
+        dst_is_remote = dst.startswith("/")
+        
+        if src_is_remote and dst_is_remote:
+            raise RemoteError(
+                "Both paths appear to be container paths. "
+                "Use relative path (./...) for local path."
+            )
+        
+        if not src_is_remote and not dst_is_remote:
+            raise RemoteError(
+                "Both paths appear to be local paths. "
+                "Use absolute path (/...) for container path."
+            )
+        
+        if src_is_remote:
+            return self.copy_from(src, dst, mode, patterns, progress)
+        else:
+            return self.copy_to(src, dst, mode, patterns, progress)
 
 
 def docker_copy(
@@ -592,3 +641,29 @@ def docker_write(
             docker.write_bytes(remote_path, content)
         else:
             docker.write_text(remote_path, content, encoding)
+
+
+def docker(container: str) -> DockerRemote:
+    """Create a Docker remote interface.
+    
+    Factory function for creating DockerRemote instances with
+    a cleaner API.
+    
+    Args:
+        container: Container name or ID.
+        
+    Returns:
+        DockerRemote instance (use as context manager).
+        
+    Example:
+        >>> from pyeff.remote import docker
+        >>> 
+        >>> with docker("my-container") as d:
+        ...     # copy() auto-detects direction based on path
+        ...     d.copy("/app/logs", "./logs")      # container → local
+        ...     d.copy("./config", "/app/config")  # local → container
+        ...     
+        ...     d.remove("/tmp/cache")
+        ...     files = d.search("/data", patterns=["*.csv"])
+    """
+    return DockerRemote(container)

@@ -462,6 +462,55 @@ class SSHRemote(RemoteBackend):
         
         with self.sftp.open(remote_path, "wb") as f:
             f.write(content)
+    
+    def copy(
+        self,
+        src: str,
+        dst: str,
+        mode: Mode = "all",
+        patterns: Optional[List[str]] = None,
+        progress: Optional[ProgressCallback] = None,
+    ) -> int:
+        """Copy files between remote and local filesystem.
+        
+        Direction is auto-detected based on path format:
+        - Absolute path (starts with /) = remote path
+        - Relative path (starts with . or other) = local path
+        
+        Args:
+            src: Source path (remote or local).
+            dst: Destination path (remote or local).
+            mode: Filter mode ("all", "include", "ignore").
+            patterns: Glob patterns for filtering.
+            progress: Optional progress callback.
+            
+        Returns:
+            Number of files copied.
+            
+        Example:
+            >>> with ssh("user@host") as s:
+            ...     s.copy("/var/log", "./logs")      # remote → local
+            ...     s.copy("./config", "/etc/app/")   # local → remote
+        """
+        src_is_remote = src.startswith("/")
+        dst_is_remote = dst.startswith("/")
+        
+        if src_is_remote and dst_is_remote:
+            raise RemoteError(
+                "Both paths appear to be remote paths. "
+                "Use relative path (./...) for local path."
+            )
+        
+        if not src_is_remote and not dst_is_remote:
+            raise RemoteError(
+                "Both paths appear to be local paths. "
+                "Use absolute path (/...) for remote path."
+            )
+        
+        if src_is_remote:
+            return self.copy_from(src, dst, mode, patterns, progress)
+        else:
+            return self.copy_to(src, dst, mode, patterns, progress)
 
 
 def ssh_connect(
@@ -488,6 +537,51 @@ def ssh_connect(
     Example:
         >>> with ssh_connect("user@server.com", key_file="~/.ssh/id_rsa") as ssh:
         ...     ssh.copy_from("/var/log", "./logs")
+    """
+    return SSHRemote(
+        host=host,
+        username=username,
+        port=port,
+        password=password,
+        key_file=key_file,
+        key_password=key_password,
+    )
+
+
+def ssh(
+    host: str,
+    username: Optional[str] = None,
+    port: Optional[int] = None,
+    password: Optional[str] = None,
+    key_file: Optional[PathLike] = None,
+    key_password: Optional[str] = None,
+) -> SSHRemote:
+    """Create an SSH remote interface.
+    
+    Factory function for creating SSHRemote instances with
+    a cleaner API. Alias for ssh_connect.
+    
+    Args:
+        host: Hostname or user@host:port format.
+        username: SSH username.
+        port: SSH port.
+        password: SSH password.
+        key_file: Path to private key file.
+        key_password: Password for private key.
+        
+    Returns:
+        SSHRemote instance (use as context manager).
+        
+    Example:
+        >>> from pyeff.remote import ssh
+        >>> 
+        >>> with ssh("user@server.com") as s:
+        ...     # copy() auto-detects direction based on path
+        ...     s.copy("/var/log", "./logs")      # remote → local
+        ...     s.copy("./config", "/etc/app/")   # local → remote
+        ...     
+        ...     s.remove("/tmp/cache")
+        ...     files = s.search("/data", patterns=["*.csv"])
     """
     return SSHRemote(
         host=host,

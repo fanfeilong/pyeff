@@ -17,6 +17,12 @@ from pyeff.archive import (
     ArchiveError,
     ArchiveInfo,
     PatternFilter,
+    pack,
+    pack_files,
+    pack_parallel,
+    unpack,
+    unpack_file,
+    copy,
 )
 
 
@@ -343,3 +349,80 @@ class TestProgress:
         extract(archive, extract_dir, progress=progress)
         
         assert len(progress_calls) == 5
+
+
+class TestUnifiedAliases:
+    """Test that pack/unpack aliases work like compress/extract."""
+    
+    def test_pack_is_compress(self):
+        assert pack is compress
+    
+    def test_pack_files_is_compress_files(self):
+        assert pack_files is compress_files
+    
+    def test_pack_parallel_is_compress_parallel(self):
+        assert pack_parallel is compress_parallel
+    
+    def test_unpack_is_extract(self):
+        assert unpack is extract
+    
+    def test_unpack_file_is_extract_file(self):
+        assert unpack_file is extract_file
+    
+    def test_pack_and_unpack_cycle(self, sample_tree, temp_dir):
+        """Test that pack -> unpack produces same content."""
+        archive = temp_dir / "test.zip"
+        pack(sample_tree, archive)
+        
+        extract_dir = temp_dir / "unpacked"
+        unpack(archive, extract_dir)
+        
+        assert (extract_dir / "file1.txt").read_text() == "content1"
+        assert (extract_dir / "subdir" / "file4.txt").read_text() == "content4"
+
+
+class TestUnifiedCopy:
+    """Test the unified copy() function that auto-detects direction."""
+    
+    def test_copy_to_archive(self, sample_tree, temp_dir):
+        """Copying to archive path should compress."""
+        archive = temp_dir / "copy_output.zip"
+        count = copy(sample_tree, archive)
+        
+        assert archive.exists()
+        assert count == 5
+    
+    def test_copy_from_archive(self, sample_tree, temp_dir):
+        """Copying from archive path should extract."""
+        archive = temp_dir / "source.tar.gz"
+        compress(sample_tree, archive)
+        
+        extract_dir = temp_dir / "copied"
+        count = copy(archive, extract_dir)
+        
+        assert count == 5
+        assert (extract_dir / "file1.txt").exists()
+    
+    def test_copy_with_patterns(self, sample_tree, temp_dir):
+        """Copy should support pattern filtering."""
+        archive = temp_dir / "filtered.zip"
+        count = copy(sample_tree, archive, mode="include", patterns=["*.txt"])
+        
+        assert count == 2
+        
+        members = list_archive(archive)
+        assert all(m.name.endswith(".txt") for m in members if m.is_file)
+    
+    def test_copy_archive_to_archive_raises(self, sample_tree, temp_dir):
+        """Copying between two archives should raise error."""
+        archive1 = temp_dir / "source.zip"
+        archive2 = temp_dir / "dest.zip"
+        compress(sample_tree, archive1)
+        
+        with pytest.raises(ArchiveError, match="Cannot copy between archives"):
+            copy(archive1, archive2)
+    
+    def test_copy_non_archive_raises(self, sample_tree, temp_dir):
+        """Copying between two non-archives should raise error."""
+        with pytest.raises(ArchiveError, match="Neither source nor destination"):
+            copy(sample_tree, temp_dir / "output_dir")

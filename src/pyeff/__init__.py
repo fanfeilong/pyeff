@@ -1,7 +1,9 @@
 """pyeff - User-friendly Python utilities for daily coding tasks.
 
 This library provides simplified APIs for common operations:
-- fs: File system operations (copy, move, remove, search)
+- fs / local: File system operations (copy, move, remove, search)
+- archive: Archive operations (compress/pack, extract/unpack)
+- remote: Remote operations (docker, ssh) with unified copy API
 - json: JSON file reading and writing
 - yaml: YAML file handling with include support
 - lines: Text line manipulation and parsing
@@ -10,6 +12,23 @@ This library provides simplified APIs for common operations:
 - hash: String and file hashing
 - git: Git repository utilities
 - indent: Indentation detection and manipulation
+
+Unified API Design:
+    >>> from pyeff import local, archive
+    >>> from pyeff.remote import docker, ssh
+    >>> 
+    >>> # All use consistent copy(src, dst) pattern
+    >>> local.copy("./src", "./dst")
+    >>> archive.copy("./data", "backup.zip")     # compress
+    >>> archive.copy("backup.zip", "./restore")  # extract
+    >>> 
+    >>> with docker("my-container") as d:
+    ...     d.copy("/app/logs", "./logs")        # container → local
+    ...     d.copy("./config", "/app/config")    # local → container
+    >>> 
+    >>> with ssh("user@host") as s:
+    ...     s.copy("/var/log", "./logs")         # remote → local
+    ...     s.copy("./data", "/remote/data")     # local → remote
 """
 
 from __future__ import annotations
@@ -20,6 +39,7 @@ __email__ = "fanfeilong@gmail.com"
 
 from . import archive
 from . import fs
+from . import local
 from . import remote
 from . import git
 from . import hash
@@ -110,6 +130,11 @@ from .archive import (
     is_archive,
     list_archive,
     list_archive_iter,
+    pack,
+    pack_files,
+    pack_parallel,
+    unpack,
+    unpack_file,
     ArchiveError,
     ArchiveInfo,
 )
@@ -160,15 +185,20 @@ __all__ = [
     "__version__",
     "__author__",
     "__email__",
+    # Modules
+    "archive",
     "fs",
     "git",
     "hash",
     "indent",
     "json",
     "lines",
+    "local",
     "logger",
+    "remote",
     "shell",
     "yaml",
+    # fs exports
     "copy",
     "current_dir",
     "ensure",
@@ -223,7 +253,7 @@ __all__ = [
     "run_cmds",
     "run_output",
     "which",
-    "archive",
+    # archive exports
     "add_to_archive",
     "archive_info",
     "compress",
@@ -234,9 +264,13 @@ __all__ = [
     "is_archive",
     "list_archive",
     "list_archive_iter",
+    "pack",
+    "pack_files",
+    "pack_parallel",
+    "unpack",
+    "unpack_file",
     "ArchiveError",
     "ArchiveInfo",
-    "remote",
     "logger_blank",
     "logger_dict",
     "logger_file_info",
