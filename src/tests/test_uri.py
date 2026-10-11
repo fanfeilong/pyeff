@@ -199,6 +199,11 @@ class TestResolvePath:
         p = resolve_path(original)
         assert p is original
     
+    def test_resolve_bare_path(self):
+        p = resolve_path("./data")
+        assert isinstance(p, LocalPath)
+        assert p.path == "./data"
+    
     def test_resolve_docker_uri(self):
         p = resolve_path("docker:container:/app")
         assert isinstance(p, DockerPath)

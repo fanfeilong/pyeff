@@ -26,29 +26,20 @@ def logger_file_info(
     skip_empty: bool = True,
     encoding: str = "utf-8",
 ) -> None:
-    """Log the contents of a file with a header.
+    """Log the contents of a file with a header (local path or URI)."""
+    from .ops import read, exists
 
-    Args:
-        file_path: Path to the file to log.
-        skip_empty: If True, skip empty lines.
-        encoding: File encoding (default: utf-8).
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-    """
-    path = _to_path(file_path)
-
-    if not path.exists():
+    if not exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
     logger_table_begin(f"show file: {file_path}")
 
-    with open(path, "r", encoding=encoding) as f:
-        for line in f:
-            line = line.rstrip("\n")
-            if skip_empty and not line.strip():
-                continue
-            logger.info(line)
+    content = read(file_path, encoding=encoding)
+    assert isinstance(content, str)
+    for line in content.splitlines():
+        if skip_empty and not line.strip():
+            continue
+        logger.info(line)
 
     logger_table_end()
 

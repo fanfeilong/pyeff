@@ -63,25 +63,12 @@ def load_all_text(
     encoding: str = "utf-8",
     buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> str:
-    """Load and return the entire content of a text file.
+    """Load and return the entire content of a text file (local or URI).
 
-    Args:
-        file_name: Path to the text file.
-        encoding: File encoding (default: utf-8).
-        buffer_size: Read buffer size for large files.
-
-    Returns:
-        The contents of the file as a string.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
+    ``buffer_size`` is kept for API compatibility; I/O goes through unified ops.
     """
-    file_path = _to_path(file_name)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_name}")
-
-    with open(file_path, "r", encoding=encoding, buffering=buffer_size) as f:
-        return f.read()
+    from .ops import read
+    return read(file_name, encoding=encoding)  # type: ignore[return-value]
 
 
 def dump_all_text(
@@ -90,19 +77,9 @@ def dump_all_text(
     encoding: str = "utf-8",
     buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> None:
-    """Write content to a file.
-
-    Args:
-        content: Text content to write.
-        file_name: Destination file path.
-        encoding: File encoding (default: utf-8).
-        buffer_size: Write buffer size for large files.
-    """
-    file_path = _to_path(file_name)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(file_path, "w", encoding=encoding, buffering=buffer_size) as f:
-        f.write(content)
+    """Write content to a file (local or URI)."""
+    from .ops import write
+    write(file_name, content, encoding=encoding)
 
 
 def load_lines_iter(
@@ -110,28 +87,32 @@ def load_lines_iter(
     remove_newline: bool = False,
     encoding: str = "utf-8",
 ) -> Generator[str, None, None]:
-    """Load lines from a text file (generator version).
+    """Load lines from a text file (generator version, local or URI)."""
+    from .uri import resolve_path, LocalPath
 
-    Memory-efficient generator for large files.
+    uri_path = resolve_path(file_name)
+    if isinstance(uri_path, LocalPath):
+        file_path = _to_path(uri_path.path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_name}")
+        with open(file_path, "r", encoding=encoding) as f:
+            for line in f:
+                if remove_newline:
+                    yield line.rstrip("\n")
+                else:
+                    yield line
+        return
 
-    Args:
-        file_name: Path to the text file.
-        remove_newline: If True, strip trailing newline.
-        encoding: File encoding.
-
-    Yields:
-        Lines from the file.
-    """
-    file_path = _to_path(file_name)
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_name}")
-
-    with open(file_path, "r", encoding=encoding) as f:
-        for line in f:
-            if remove_newline:
-                yield line.rstrip("\n")
-            else:
-                yield line
+    from .ops import read
+    content = read(uri_path, encoding=encoding)
+    assert isinstance(content, str)
+    if content == "":
+        return
+    for line in content.splitlines(keepends=True):
+        if remove_newline:
+            yield line.rstrip("\n")
+        else:
+            yield line
 
 
 def load_lines(
@@ -139,19 +120,7 @@ def load_lines(
     remove_newline: bool = False,
     encoding: str = "utf-8",
 ) -> List[str]:
-    """Load lines from a text file.
-
-    Args:
-        file_name: Path to the text file.
-        remove_newline: If True, strip trailing newline from each line.
-        encoding: File encoding (default: utf-8).
-
-    Returns:
-        List of lines from the file.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-    """
+    """Load lines from a text file (local or URI)."""
     return list(load_lines_iter(file_name, remove_newline, encoding))
 
 
@@ -162,25 +131,14 @@ def dump_lines(
     encoding: str = "utf-8",
     buffer_size: int = DEFAULT_BUFFER_SIZE,
 ) -> None:
-    """Write lines to a file.
+    """Write lines to a file (local or URI)."""
+    from .ops import write
 
-    Args:
-        lines: Iterable of lines to write.
-        file_name: Destination file path.
-        append_newline: If True, append newline to each line.
-        encoding: File encoding (default: utf-8).
-        buffer_size: Write buffer size.
-    """
-    file_path = _to_path(file_name)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(file_path, "w", encoding=encoding, buffering=buffer_size) as f:
-        if append_newline:
-            for line in lines:
-                f.write(line)
-                f.write("\n")
-        else:
-            f.writelines(lines)
+    if append_newline:
+        content = "".join(line + "\n" for line in lines)
+    else:
+        content = "".join(lines)
+    write(file_name, content, encoding=encoding)
 
 
 class CompiledPatterns:

@@ -147,10 +147,14 @@ class TestArchiveToLocal:
 
 
 class TestCopyError:
-    def test_unsupported_operation(self):
-        """Test that unsupported operations raise CopyError."""
-        with pytest.raises(CopyError, match="Unsupported copy operation"):
-            copy("archive:./a.zip", "archive:./b.zip")
+    def test_archive_to_archive(self, sample_tree, temp_dir):
+        """Test re-packing one archive into another."""
+        src_arc = temp_dir / "src.zip"
+        dst_arc = temp_dir / "dst.zip"
+        copy(f"local:{sample_tree}", f"archive:{src_arc}")
+        count = copy(f"archive:{src_arc}", f"archive:{dst_arc}")
+        assert count == 5
+        assert dst_arc.exists()
     
     def test_archive_exists_no_overwrite(self, sample_tree, temp_dir):
         """Test that existing archive without overwrite raises error."""
@@ -170,15 +174,17 @@ class TestCopyError:
 
 
 class TestURIValidation:
-    def test_invalid_uri_format(self):
-        """Test that invalid URI format raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid URI format"):
-            copy("invalid", "local:./dst")
+    def test_bare_path_treated_as_local(self, sample_tree, temp_dir):
+        """Bare paths (no scheme) resolve as local paths."""
+        dst = temp_dir / "bare_dst"
+        count = copy(str(sample_tree), str(dst))
+        assert count == 5
+        assert (dst / "file1.txt").exists()
     
-    def test_unknown_scheme(self):
-        """Test that unknown scheme raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown URI scheme"):
-            copy("ftp:./src", "local:./dst")
+    def test_unknown_scheme_treated_as_local_path(self, temp_dir):
+        """Unknown schemes like ftp: fall back to local path (may not exist)."""
+        with pytest.raises(FileNotFoundError):
+            copy("ftp:./src", f"local:{temp_dir / 'dst'}")
 
 
 class TestProgress:

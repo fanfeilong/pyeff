@@ -673,6 +673,152 @@ def is_archive(path: PathLike) -> bool:
         return False
 
 
+def write_member(
+    archive_path: PathLike,
+    inner_path: str,
+    content: Union[str, bytes],
+    encoding: str = "utf-8",
+) -> None:
+    """Write (or overwrite) a single member inside an archive.
+
+    Creates the archive if it does not exist (zip preferred from extension).
+    For existing zip archives, members are replaced by rewrite.
+    For tar formats, the archive is rewritten.
+    """
+    path = _to_path(archive_path)
+    arcname = inner_path.lstrip("/")
+    data = content if isinstance(content, bytes) else content.encode(encoding)
+
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fmt = _detect_format(path)
+        if fmt == "zip":
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(arcname, data)
+            return
+        # Create a new tar-* archive with a single member
+        mode = _get_tar_mode(fmt, write=True)
+        with tarfile.open(path, mode) as tf:
+            import io
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        return
+
+    fmt = _detect_format(path)
+    if fmt == "zip":
+        # Rewrite without the old member, then add the new one
+        import tempfile
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            with zipfile.ZipFile(path, "r") as zin, zipfile.ZipFile(
+                tmp_path, "w", zipfile.ZIP_DEFLATED
+            ) as zout:
+                for item in zin.infolist():
+                    if item.filename == arcname or item.filename.rstrip("/") == arcname.rstrip("/"):
+                        continue
+                    zout.writestr(item, zin.read(item.filename))
+                zout.writestr(arcname, data)
+            tmp_path.replace(path)
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+        return
+
+    # Tar: extract to temp, write file, recompress
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        extract(path, td, overwrite=True)
+        target = Path(td) / arcname
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        path.unlink()
+        compress(td, path)
+
+
+def remove_members(
+    archive_path: PathLike,
+    inner_paths: Optional[List[str]] = None,
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+) -> int:
+    """Remove members from an archive by path and/or patterns.
+
+    Returns the number of members removed.
+    """
+    path = _to_path(archive_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Archive not found: {archive_path}")
+
+    targets: Set[str] = set()
+    if inner_paths:
+        for p in inner_paths:
+            targets.add(p.lstrip("/"))
+
+    filter_obj = PatternFilter(mode, patterns) if patterns or mode != "all" else None
+    fmt = _detect_format(path)
+    removed = 0
+
+    def _should_remove(name: str, is_dir: bool = False) -> bool:
+        n = name.rstrip("/")
+        if targets:
+            for t in targets:
+                if n == t or n.startswith(t + "/") or name.startswith(t + "/"):
+                    return True
+            if not filter_obj:
+                return False
+        if filter_obj is not None:
+            return filter_obj.match(n)
+        return bool(targets)
+
+    if fmt == "zip":
+        import tempfile
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            with zipfile.ZipFile(path, "r") as zin, zipfile.ZipFile(
+                tmp_path, "w", zipfile.ZIP_DEFLATED
+            ) as zout:
+                for item in zin.infolist():
+                    if _should_remove(item.filename, item.is_dir()):
+                        removed += 1
+                        continue
+                    zout.writestr(item, zin.read(item.filename))
+            tmp_path.replace(path)
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+        return removed
+
+    # Tar: extract, delete, recompress
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        members_before = list_archive(path)
+        extract(path, td, overwrite=True)
+        td_path = Path(td)
+        for m in members_before:
+            if _should_remove(m.name, m.is_dir):
+                target = td_path / m.name
+                if target.is_dir():
+                    import shutil
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.exists():
+                    target.unlink()
+                removed += 1
+        path.unlink()
+        compress(td, path)
+    return removed
+
+
 def compress_parallel(
     source: PathLike,
     output: PathLike,

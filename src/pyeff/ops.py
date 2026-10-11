@@ -47,6 +47,7 @@ from .uri import (
     WebDAVPath,
     ArchivePath,
     resolve_path,
+    join_uri,
 )
 
 Mode = Literal["all", "ignore", "include"]
@@ -206,6 +207,9 @@ def _get_copy_handler(src: URIPath, dst: URIPath):
     for scheme in remotes:
         if ("archive", scheme) not in handlers:
             handlers[("archive", scheme)] = _copy_archive_via_temp
+        if (scheme, "archive") not in handlers:
+            handlers[(scheme, "archive")] = _copy_to_archive_via_temp
+    handlers[("archive", "archive")] = _copy_archive_to_archive
     
     handler = handlers.get(key)
     if handler is None:
@@ -473,6 +477,65 @@ def _copy_archive_via_temp(
                 temp_dir, _remote_path_arg(dst),
                 mode=mode, patterns=patterns, progress=progress,
             )
+
+
+def _copy_to_archive_via_temp(
+    src: URIPath,
+    dst: ArchivePath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Download remote (or stage content) then compress into archive."""
+    import tempfile
+    from .archive import compress
+    
+    archive_path = Path(dst.archive_path)
+    if archive_path.exists() and not overwrite:
+        raise CopyError(f"Archive already exists: {dst.archive_path}")
+    if archive_path.exists() and overwrite:
+        archive_path.unlink()
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        staging = Path(temp_dir) / "payload"
+        staging.mkdir()
+        with _open_remote(src) as src_remote:
+            src_remote.copy_from(
+                _remote_path_arg(src), str(staging),
+                mode=mode, patterns=patterns,
+            )
+        # If staging contains a single top-level item, compress that item's parent content
+        return compress(
+            staging, dst.archive_path,
+            mode=mode, patterns=patterns, progress=progress,
+        )
+
+
+def _copy_archive_to_archive(
+    src: ArchivePath,
+    dst: ArchivePath,
+    mode: Mode,
+    patterns: Optional[List[str]],
+    overwrite: bool,
+    progress: Optional[ProgressCallback],
+) -> int:
+    """Re-pack an archive into another archive via temp extract."""
+    import tempfile
+    from .archive import compress, extract
+    
+    archive_path = Path(dst.archive_path)
+    if archive_path.exists() and not overwrite:
+        raise CopyError(f"Archive already exists: {dst.archive_path}")
+    if archive_path.exists() and overwrite:
+        archive_path.unlink()
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract(src.archive_path, temp_dir, mode=mode, patterns=patterns, overwrite=True)
+        return compress(
+            temp_dir, dst.archive_path,
+            mode=mode, patterns=patterns, progress=progress,
+        )
 
 
 # Docker operations
@@ -837,7 +900,22 @@ def remove(
             )
     
     elif isinstance(uri_path, ArchivePath):
-        raise RemoveError("Cannot remove from archive directly")
+        from .archive import remove_members
+        if not Path(uri_path.archive_path).exists():
+            if missing_ok:
+                return 0
+            raise RemoveError(f"Archive not found: {uri_path.archive_path}")
+        inner_paths = [uri_path.inner_path.lstrip("/")] if uri_path.inner_path else None
+        if inner_paths is None and mode == "all" and not patterns:
+            # Remove the archive file itself
+            Path(uri_path.archive_path).unlink()
+            return 1
+        return remove_members(
+            uri_path.archive_path,
+            inner_paths=inner_paths,
+            mode=mode,
+            patterns=patterns,
+        )
     
     else:
         raise RemoveError(f"Unsupported path type: {type(uri_path)}")
@@ -1035,7 +1113,21 @@ def listdir(
             ) for i in items]
     
     elif isinstance(uri_path, HTTPPath):
-        raise OperationError("listdir is not supported for HTTP URLs")
+        # HTTP has no directory listing protocol; expose the URL as a single file entry.
+        with _open_remote(uri_path) as client:
+            remote = _remote_path_arg(uri_path)
+            if not client.exists(remote):
+                return []
+            try:
+                size = len(client.read_bytes(remote))
+            except Exception:
+                size = 0
+            url_path = uri_path.get_url_path()
+            name = Path(url_path.split("?")[0]).name or url_path
+            return [FileInfo(
+                name=name, path=uri_path.to_uri(), size=size,
+                is_dir=False, is_file=True,
+            )]
     
     elif isinstance(uri_path, ArchivePath):
         from .archive import list_archive
@@ -1181,7 +1273,18 @@ def write(
                 client.write_text(_remote_path_arg(uri_path), content, encoding=encoding)
     
     elif isinstance(uri_path, ArchivePath):
-        raise WriteError("Cannot write to archive directly. Use copy() to create archives.")
+        from .archive import write_member
+        if not uri_path.inner_path:
+            raise WriteError(
+                "Must specify inner path for archive write: "
+                "archive:./path.zip:/file.txt"
+            )
+        write_member(
+            uri_path.archive_path,
+            uri_path.inner_path.lstrip("/"),
+            content,
+            encoding=encoding,
+        )
     
     else:
         raise WriteError(f"Unsupported path type: {type(uri_path)}")
@@ -1226,6 +1329,240 @@ def move(
     return count
 
 
+def file_size(path: Union[str, URIPath]) -> int:
+    """Get file size in bytes for any URI backend."""
+    uri_path = resolve_path(path)
+    
+    if isinstance(uri_path, LocalPath):
+        from .fs import file_size as fs_file_size
+        return fs_file_size(uri_path.path)
+    
+    if isinstance(uri_path, ArchivePath):
+        from .archive import list_archive
+        if not uri_path.inner_path:
+            p = Path(uri_path.archive_path)
+            if not p.exists():
+                raise FileNotFoundError(f"Archive not found: {uri_path.archive_path}")
+            return p.stat().st_size
+        inner = uri_path.inner_path.lstrip("/")
+        for m in list_archive(uri_path.archive_path):
+            if m.name == inner or m.name.rstrip("/") == inner:
+                if m.is_dir:
+                    raise IsADirectoryError(f"Path is a directory: {inner}")
+                return m.size
+        raise FileNotFoundError(f"Member not found in archive: {inner}")
+    
+    if isinstance(uri_path, HTTPPath):
+        with _open_remote(uri_path) as client:
+            data = client.read_bytes(_remote_path_arg(uri_path))
+            return len(data)
+    
+    with _open_remote(uri_path) as client:
+        remote = _remote_path_arg(uri_path)
+        if not client.exists(remote):
+            raise FileNotFoundError(f"File not found: {uri_path.to_uri()}")
+        if client.is_dir(remote):
+            raise IsADirectoryError(f"Path is a directory: {uri_path.to_uri()}")
+        # Prefer listdir/search metadata when available
+        parent = str(Path(remote).parent) if remote not in ("", "/") else remote
+        name = Path(remote).name
+        try:
+            for item in client.listdir(parent):
+                if item.name == name and item.is_file:
+                    return item.size
+        except Exception:
+            pass
+        return len(client.read_bytes(remote))
+
+
+def ensure(path: Union[str, URIPath]) -> str:
+    """Ensure a directory exists on any URI backend.
+    
+    Returns the URI string of the ensured directory.
+    """
+    uri_path = resolve_path(path)
+    
+    if isinstance(uri_path, LocalPath):
+        from .fs import ensure as fs_ensure
+        return str(fs_ensure(uri_path.path))
+    
+    if isinstance(uri_path, ArchivePath):
+        raise OperationError("ensure() is not supported for archive paths")
+    
+    if isinstance(uri_path, HTTPPath):
+        raise OperationError("ensure() is not supported for HTTP URLs")
+    
+    # Create directory by writing a temporary marker file then removing it.
+    marker_name = ".pyeff_ensure"
+    remote = _remote_path_arg(uri_path).rstrip("/")
+    marker = f"{remote}/{marker_name}" if remote else marker_name
+    with _open_remote(uri_path) as client:
+        if client.exists(remote) and client.is_dir(remote):
+            return uri_path.to_uri()
+        client.write_bytes(marker, b"")
+        try:
+            client.remove(marker, recursive=False)
+        except Exception:
+            pass
+    return uri_path.to_uri()
+
+
+def is_empty_dir(path: Union[str, URIPath]) -> bool:
+    """Return True if the directory at *path* is empty."""
+    uri_path = resolve_path(path)
+    
+    if isinstance(uri_path, LocalPath):
+        from .fs import is_empty_dir as fs_is_empty_dir
+        return fs_is_empty_dir(uri_path.path)
+    
+    if isinstance(uri_path, HTTPPath):
+        raise OperationError("is_empty_dir() is not supported for HTTP URLs")
+    
+    if not exists(uri_path):
+        raise FileNotFoundError(f"Directory not found: {uri_path.to_uri()}")
+    
+    items = listdir(uri_path)
+    return len(items) == 0
+
+
+def listdir_iter(
+    path: Union[str, URIPath],
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+):
+    """Iterate directory entries (URI-aware)."""
+    yield from listdir(path, mode=mode, patterns=patterns)
+
+
+def search_iter(
+    path: Union[str, URIPath],
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+    recursive: bool = True,
+):
+    """Iterate search results (URI-aware)."""
+    yield from search(path, mode=mode, patterns=patterns, recursive=recursive)
+
+
+def walk_iter(
+    path: Union[str, URIPath],
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+):
+    """Walk files under *path* (URI-aware generator of path strings)."""
+    uri_path = resolve_path(path)
+    
+    if isinstance(uri_path, LocalPath):
+        from .fs import walk_iter as fs_walk_iter
+        for p in fs_walk_iter(uri_path.path):
+            yield str(p)
+        return
+    
+    yield from search(uri_path, mode=mode, patterns=patterns, recursive=True)
+
+
+def walk(
+    path: Union[str, URIPath],
+    mode: Mode = "all",
+    patterns: Optional[List[str]] = None,
+) -> List[str]:
+    """Walk files under *path* and return matching path strings."""
+    return list(walk_iter(path, mode=mode, patterns=patterns))
+
+
+def tree(
+    path: Union[str, URIPath],
+    max_depth: Optional[int] = None,
+    show_hidden: bool = False,
+) -> str:
+    """Generate a tree representation for any URI backend."""
+    uri_path = resolve_path(path)
+    
+    if isinstance(uri_path, LocalPath):
+        from .fs import tree as fs_tree
+        return fs_tree(uri_path.path, max_depth=max_depth, show_hidden=show_hidden)
+    
+    if isinstance(uri_path, HTTPPath):
+        return uri_path.to_uri()
+    
+    if isinstance(uri_path, ArchivePath):
+        from .archive import list_archive
+        return _tree_from_names(
+            uri_path.to_uri(),
+            [m.name for m in list_archive(uri_path.archive_path)],
+            max_depth=max_depth,
+            show_hidden=show_hidden,
+        )
+    
+    root_label = uri_path.to_uri()
+    lines: List[str] = [root_label]
+    
+    def _recurse(current: URIPath, prefix: str, depth: int) -> None:
+        if max_depth is not None and depth > max_depth:
+            return
+        try:
+            entries = listdir(current)
+        except Exception:
+            return
+        if not show_hidden:
+            entries = [e for e in entries if not e.name.startswith(".")]
+        entries = sorted(entries, key=lambda e: (e.is_file, e.name.lower()))
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{entry.name}")
+            if entry.is_dir:
+                child = resolve_path(join_uri(current, entry.name))
+                extension = "    " if is_last else "│   "
+                _recurse(child, prefix + extension, depth + 1)
+    
+    _recurse(uri_path, "", 0)
+    return "\n".join(lines)
+
+
+def _tree_from_names(
+    root_label: str,
+    names: List[str],
+    max_depth: Optional[int] = None,
+    show_hidden: bool = False,
+) -> str:
+    """Build a tree string from a flat list of relative paths."""
+    # nested dict: name -> children dict or None (file)
+    root: dict = {}
+    for name in names:
+        parts = [p for p in name.strip("/").split("/") if p]
+        if not parts:
+            continue
+        if not show_hidden and any(p.startswith(".") for p in parts):
+            continue
+        node = root
+        for i, part in enumerate(parts):
+            is_last = i == len(parts) - 1
+            if is_last:
+                node.setdefault(part, None)
+            else:
+                if part not in node or node[part] is None:
+                    node[part] = {}
+                node = node[part]
+    
+    lines: List[str] = [root_label]
+    
+    def _walk(node: dict, prefix: str, depth: int) -> None:
+        if max_depth is not None and depth > max_depth:
+            return
+        items = sorted(node.items(), key=lambda kv: (kv[1] is None, kv[0].lower()))
+        for i, (name, children) in enumerate(items):
+            is_last = i == len(items) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{name}")
+            if isinstance(children, dict):
+                extension = "    " if is_last else "│   "
+                _walk(children, prefix + extension, depth + 1)
+    
+    _walk(root, "", 0)
+    return "\n".join(lines)
+
+
 __all__ = [
     # Operations
     "copy",
@@ -1236,6 +1573,14 @@ __all__ = [
     "read",
     "write",
     "move",
+    "file_size",
+    "ensure",
+    "is_empty_dir",
+    "tree",
+    "walk",
+    "walk_iter",
+    "search_iter",
+    "listdir_iter",
     # Types
     "FileInfo",
     # Errors

@@ -858,6 +858,25 @@ _SSH_PATH_PATTERN = re.compile(r'^([^:]+?)(?::(\d+))?:(.+)$')
 _K8S_PATH_PATTERN = re.compile(r'^((?:[^:/]+/)?[^:/]+(?:/[^:/]+)?):(.+)$')
 _ARCHIVE_INNER_PATTERN = re.compile(r'^(.+?\.(?:zip|tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2|txz)):(.+)$', re.I)
 
+# Known schemes — anything else (e.g. Windows "c:/...") is treated as a local path.
+KNOWN_SCHEMES = frozenset({
+    "local", "docker", "ssh", "k8s", "archive",
+    "s3", "gs", "gcs", "az", "azure",
+    "http", "https",
+    "smb",
+    "webdav", "webdavs", "dav", "davs",
+})
+
+
+def looks_like_uri(path: Union[str, Path, "URIPath"]) -> bool:
+    """Return True if *path* uses a known URI scheme."""
+    if isinstance(path, URIPath):
+        return True
+    if isinstance(path, Path):
+        return False
+    match = _URI_PATTERN.match(str(path))
+    return bool(match and match.group(1) in KNOWN_SCHEMES)
+
 
 def parse_uri(uri: str) -> URIPath:
     """Parse a URI string into a URIPath object.
@@ -1044,11 +1063,14 @@ def parse_uri(uri: str) -> URIPath:
         raise ValueError(f"Unknown URI scheme: {scheme!r}")
 
 
-def resolve_path(path: Union[str, URIPath]) -> URIPath:
-    """Resolve a path (string or URIPath) to a URIPath object.
+def resolve_path(path: Union[str, Path, URIPath]) -> URIPath:
+    """Resolve a path (string, Path, or URIPath) to a URIPath object.
+    
+    Bare local paths (without a known scheme) become ``LocalPath``.
+    Windows drive letters (``c:/...``) are treated as local paths.
     
     Args:
-        path: URI string or URIPath object.
+        path: URI string, bare local path, ``Path``, or URIPath object.
         
     Returns:
         URIPath object.
@@ -1057,12 +1079,49 @@ def resolve_path(path: Union[str, URIPath]) -> URIPath:
         >>> resolve_path("local:./data")
         LocalPath('local:./data')
         
+        >>> resolve_path("./data")
+        LocalPath('local:./data')
+        
         >>> resolve_path(LocalPath("./data"))
         LocalPath('local:./data')
     """
     if isinstance(path, URIPath):
         return path
-    return parse_uri(path)
+    if isinstance(path, Path):
+        return LocalPath(str(path))
+    s = str(path)
+    if looks_like_uri(s):
+        return parse_uri(s)
+    return LocalPath(s)
+
+
+def join_uri(base: Union[str, Path, URIPath], relative: str) -> str:
+    """Join a base URI/path with a relative path segment.
+    
+    Example:
+        >>> join_uri("docker:ctr:/app/cfg", "data.yml")
+        'docker:ctr:/app/cfg/data.yml'
+        >>> join_uri("local:./cfg", "a.yml")
+        'local:./cfg/a.yml'
+    """
+    base_path = resolve_path(base)
+    rel = relative.lstrip("/")
+    
+    if isinstance(base_path, LocalPath):
+        base = base_path.path.rstrip("/") or "."
+        return f"local:{base}/{rel}"
+    
+    if isinstance(base_path, ArchivePath):
+        if base_path.inner_path:
+            inner = str(Path(base_path.inner_path.lstrip("/")) / rel)
+        else:
+            inner = rel
+        return f"archive:{base_path.archive_path}:/{inner}"
+    
+    uri = base_path.to_uri()
+    if uri.endswith("/"):
+        return f"{uri}{rel}"
+    return f"{uri.rstrip('/')}/{rel}"
 
 
 __all__ = [
@@ -1090,6 +1149,9 @@ __all__ = [
     "smb_uri",
     "webdav_uri",
     "archive",
+    "KNOWN_SCHEMES",
+    "looks_like_uri",
     "parse_uri",
     "resolve_path",
+    "join_uri",
 ]
