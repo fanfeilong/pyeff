@@ -48,6 +48,15 @@ from .http import (
     http,
     http_download,
 )
+from .webdav import (
+    WebDAVRemote,
+    webdav,
+)
+from .smb import (
+    SMBRemote,
+    smb,
+    SMB_AVAILABLE,
+)
 
 __all__ = [
     # Base
@@ -74,6 +83,13 @@ __all__ = [
     "HTTPRemote",
     "http",
     "http_download",
+    # WebDAV (NAS)
+    "WebDAVRemote",
+    "webdav",
+    # SMB/CIFS (NAS)
+    "SMBRemote",
+    "smb",
+    "SMB_AVAILABLE",
 ]
 
 try:

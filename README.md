@@ -44,7 +44,7 @@ pyeff provides **unified operations** that work across all backends using URI-st
 
 ```python
 from pyeff import copy, remove, search, exists, read, write, move, listdir
-from pyeff.uri import local, docker, ssh, k8s, s3, gs, az, archive
+from pyeff.uri import local, docker, ssh, k8s, s3, gs, az, smb_uri, webdav_uri, archive
 
 # Copy
 copy("local:./src", "local:./dst")
@@ -101,6 +101,16 @@ copy("az://my-container/logs/", "local:./logs")
 # HTTP(S) download (stdlib, no extra deps)
 copy("https://example.com/file.zip", "local:./file.zip")
 content = read("https://example.com/api/data.json")
+
+# SMB/CIFS NAS (pip install pyeff[smb])
+copy("smb://nas.local/shared/docs/", "local:./docs")
+copy(smb_uri("nas.local", "shared", "docs/", username="user", password="pass"),
+     local("./docs"))
+
+# WebDAV NAS (stdlib, no extra deps) — Synology / Nextcloud / etc.
+copy("webdavs://nas.local/webdav/docs/", "local:./docs")
+copy(webdav_uri("https://cloud/remote.php/dav/files/user", "Documents/",
+                username="user", password="pass"), local("./docs"))
 ```
 
 ### URI Format
@@ -118,6 +128,8 @@ content = read("https://example.com/api/data.json")
 | GCS | `gs://bucket/path` | `gs://my-bucket/data/` |
 | Azure Blob | `az://container/blob` | `az://my-container/logs/` |
 | HTTP(S) | `https://host/path` | `https://example.com/file.zip` |
+| SMB/CIFS (NAS) | `smb://host/share/path` | `smb://nas.local/shared/docs/` |
+| WebDAV (NAS) | `webdavs://host/path` | `webdavs://nas.local/webdav/docs/` |
 | Archive | `archive:./path.zip` | `archive:./backup.tar.gz` |
 | Archive (inner) | `archive:./path.zip:/inner` | `archive:./data.zip:/config.json` |
 
@@ -126,15 +138,15 @@ content = read("https://example.com/api/data.json")
 | Operation | Description | Supported Backends |
 |-----------|-------------|-------------------|
 | `copy(src, dst)` | Copy files | all |
-| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s, s3, gs, az, http |
-| `search(path)` | Search files | local, docker, ssh, k8s, s3, gs, az, archive |
+| `remove(path)` | Remove files/dirs | local, docker, ssh, k8s, s3, gs, az, http, smb, webdav |
+| `search(path)` | Search files | local, docker, ssh, k8s, s3, gs, az, smb, webdav, archive |
 | `exists(path)` | Check existence | all |
-| `listdir(path)` | List directory | local, docker, ssh, k8s, s3, gs, az, archive |
+| `listdir(path)` | List directory | local, docker, ssh, k8s, s3, gs, az, smb, webdav, archive |
 | `read(path)` | Read file content | all |
-| `write(path, content)` | Write file content | local, docker, ssh, k8s, s3, gs, az, http |
+| `write(path, content)` | Write file content | local, docker, ssh, k8s, s3, gs, az, http, smb, webdav |
 | `move(src, dst)` | Move files | all (cross-backend via copy+remove) |
 
-Optional installs: `pip install pyeff[s3]`, `pyeff[gcs]`, `pyeff[azure]`, or `pyeff[cloud]` for all object stores.
+Optional installs: `pip install pyeff[s3]`, `pyeff[gcs]`, `pyeff[azure]`, `pyeff[smb]` / `pyeff[nas]`, or `pyeff[cloud]`. WebDAV needs no extra package.
 
 ## Quick Start
 
