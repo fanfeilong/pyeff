@@ -16,40 +16,18 @@ Five verb families — that is the whole grammar.
 | EDIT   | ``update`` ``merge`` ``map``  | Transform in-memory content      |
 | SAVE   | ``save``                      | Write content back (or to a URI) |
 | SEND   | ``to`` ``fanout`` ``move_to`` | Move/copy the *place* elsewhere  |
-| CHECK  | ``exists`` ``same_hash``              | Confirm (bool / fail-fast) |
+| CHECK  | ``exists`` ``same_hash``      | Confirm presence / equality      |
 
-Inspect without changing the chain position:
-``exists``, ``hash``, ``size``, ``tree``, ``search``, ``listdir``, ``read``.
+Auth (who) is a separate, composable ``Profile`` — never embedded in URI strings.
+Two clusters of the same scheme use **logical names**::
 
-Why this lowers cognitive load
-------------------------------
-1. **One entry point** — only ``at(...)``. No separate builders per backend.
-2. **One object type** — always ``Flow``. No Loc vs Doc vs Pipeline classes.
-3. **URI is opaque** — docker/ssh/s3/archive look the same; ops already know how.
-4. **Two kinds of data only**:
-   - *place* (``.uri``) — where we point
-   - *payload* (optional) — content after LOAD; cleared/synced by SAVE/SEND
-5. **SEND vs SAVE are distinct on purpose**:
-   - ``save`` writes the *payload* (edited JSON/YAML/text)
-   - ``to`` / ``fanout`` copies the *file/dir at uri* (or payload if dirty)
+    at("./cfg.json", auth=auth).fanout(
+        "@staging_k8s:app-pod:/etc/app/config.json",
+        "@prod_k8s:app-pod:/etc/app/config.json",
+    )
+    # or: auth.ref("staging_k8s", "app-pod:/etc/app/config.json")
 
-Typical release script
-----------------------
->>> from pyeff.flow import at
->>> (
-...     at("./configs/app.json")
-...     .json()
-...     .update(env="staging", release="1")
-...     .save()
-...     .fanout(
-...         "docker:app:/etc/app/config.json",
-...         "s3://configs/app/config.json",
-...     )
-...     .same_hash(
-...         "docker:app:/etc/app/config.json",
-...         "s3://configs/app/config.json",
-...     )
-... )
+See ``docs/profile.md`` and ``docs/flow.md``.
 """
 
 from __future__ import annotations
@@ -68,11 +46,11 @@ class FlowError(Exception):
 class Flow:
     """Location-centered fluent pipeline.
 
-    Users should not subclass this. Treat it as: "a finger pointing at a URI,
-    optionally holding edited content."
+    Holds a resolved ``URIPath`` (credentials preserved from Profile) and an
+    optional payload after LOAD/EDIT.
     """
 
-    __slots__ = ("_uri", "_data", "_kind", "_dirty")
+    __slots__ = ("_path", "_data", "_kind", "_dirty", "_auth")
 
     def __init__(
         self,
@@ -80,12 +58,24 @@ class Flow:
         data: Any = None,
         kind: Optional[str] = None,
         dirty: bool = False,
+        auth: Any = None,
+        _path: Optional[URIPath] = None,
     ) -> None:
-        # Always normalize to a URI string so ops/resolve_path stay consistent.
-        self._uri = resolve_path(uri).to_uri()
+        self._auth = auth
+        if _path is not None:
+            self._path = _path
+        else:
+            self._path = self._resolve(uri)
         self._data = data
         self._kind = kind  # "json" | "yaml" | "text" | "bytes" | None
         self._dirty = dirty
+
+    def _resolve(self, uri: PathLike) -> URIPath:
+        if isinstance(uri, URIPath):
+            return uri
+        if self._auth is not None:
+            return self._auth.resolve(uri)
+        return resolve_path(uri)
 
     # ------------------------------------------------------------------
     # Construction / identity
@@ -93,69 +83,79 @@ class Flow:
 
     @property
     def uri(self) -> str:
-        """Current location as URI string."""
-        return self._uri
+        """Current location as URI string (secrets never appear here)."""
+        return self._path.to_uri()
+
+    @property
+    def path(self) -> URIPath:
+        """Resolved URIPath (may carry connection params from Profile)."""
+        return self._path
+
+    @property
+    def auth(self) -> Any:
+        return self._auth
 
     def __repr__(self) -> str:
         payload = f", kind={self._kind!r}, dirty={self._dirty}" if self._kind else ""
-        return f"Flow({self._uri!r}{payload})"
+        auth = f", auth={self._auth!r}" if self._auth is not None else ""
+        return f"Flow({self.uri!r}{payload}{auth})"
 
     def __str__(self) -> str:
-        return self._uri
+        return self.uri
 
     def _clone(
         self,
-        uri: Optional[PathLike] = None,
         data: Any = ...,
         kind: Any = ...,
         dirty: Any = ...,
+        auth: Any = ...,
+        path: Any = ...,
     ) -> "Flow":
+        new_path = self._path if path is ... else path
+        new_auth = self._auth if auth is ... else auth
         return Flow(
-            uri if uri is not None else self._uri,
+            new_path.to_uri(),
             data=self._data if data is ... else data,
             kind=self._kind if kind is ... else kind,
             dirty=self._dirty if dirty is ... else dirty,
+            auth=new_auth,
+            _path=new_path,
         )
 
     # ------------------------------------------------------------------
-    # LOAD — pull content into the flow
+    # LOAD
     # ------------------------------------------------------------------
 
     def json(self) -> "Flow":
-        """Load URI as JSON object into the flow payload."""
         from .json import loads
         from .ops import read
 
-        text = read(self._uri, encoding="utf-8")
+        text = read(self._path, encoding="utf-8")
         assert isinstance(text, str)
         return self._clone(data=loads(text), kind="json", dirty=False)
 
     def yaml(self) -> "Flow":
-        """Load URI as YAML object into the flow payload."""
         from .yaml import loads
         from .ops import read
 
-        text = read(self._uri, encoding="utf-8")
+        text = read(self._path, encoding="utf-8")
         assert isinstance(text, str)
         return self._clone(data=loads(text), kind="yaml", dirty=False)
 
     def text(self) -> "Flow":
-        """Load URI as text into the flow payload."""
         from .ops import read
 
-        text = read(self._uri, encoding="utf-8")
+        text = read(self._path, encoding="utf-8")
         return self._clone(data=text, kind="text", dirty=False)
 
-    def bytes(self) -> "Flow":  # noqa: A003 — intentional verb name
-        """Load URI as bytes into the flow payload."""
+    def bytes(self) -> "Flow":  # noqa: A003
         from .ops import read
 
-        data = read(self._uri, binary=True)
+        data = read(self._path, binary=True)
         return self._clone(data=data, kind="bytes", dirty=False)
 
     @property
     def data(self) -> Any:
-        """Current payload (after LOAD / EDIT). Raises if empty."""
         if self._kind is None:
             raise FlowError(
                 "No payload loaded. Call .json() / .yaml() / .text() / .bytes() first."
@@ -163,7 +163,7 @@ class Flow:
         return self._data
 
     # ------------------------------------------------------------------
-    # EDIT — transform payload
+    # EDIT
     # ------------------------------------------------------------------
 
     def _require_payload(self, op: str) -> None:
@@ -171,7 +171,6 @@ class Flow:
             raise FlowError(f".{op}() needs a payload. Call .json()/.yaml()/.text() first.")
 
     def update(self, **kwargs: Any) -> "Flow":
-        """Update mapping keys (JSON/YAML dict payload)."""
         self._require_payload("update")
         if not isinstance(self._data, dict):
             raise FlowError(".update() requires a dict payload (use .json()/.yaml()).")
@@ -180,7 +179,6 @@ class Flow:
         return self._clone(data=new_data, dirty=True)
 
     def merge(self, other: dict, deep: bool = True) -> "Flow":
-        """Deep/shallow merge a dict into the payload."""
         self._require_payload("merge")
         if not isinstance(self._data, dict):
             raise FlowError(".merge() requires a dict payload.")
@@ -189,22 +187,30 @@ class Flow:
         return self._clone(data=json_merge(self._data, other, deep=deep), dirty=True)
 
     def map(self, fn: Callable[[Any], Any]) -> "Flow":  # noqa: A003
-        """Replace payload with ``fn(data)``."""
         self._require_payload("map")
         return self._clone(data=fn(self._data), dirty=True)
 
     # ------------------------------------------------------------------
-    # SAVE — write payload
+    # SAVE
     # ------------------------------------------------------------------
 
     def save(self, dst: Optional[PathLike] = None) -> "Flow":
-        """Write payload to ``dst`` (default: current uri). Returns Flow at write target."""
         self._require_payload("save")
-        target = dst if dst is not None else self._uri
-        self._write_payload(target)
-        return Flow(target, data=self._data, kind=self._kind, dirty=False)
+        if dst is None:
+            target_path = self._path
+        else:
+            target_path = self._resolve(dst)
+        self._write_payload(target_path)
+        return Flow(
+            target_path.to_uri(),
+            data=self._data,
+            kind=self._kind,
+            dirty=False,
+            auth=self._auth,
+            _path=target_path,
+        )
 
-    def _write_payload(self, target: PathLike) -> None:
+    def _write_payload(self, target: URIPath) -> None:
         from .ops import write
 
         if self._kind == "json":
@@ -222,33 +228,35 @@ class Flow:
             raise FlowError(f"Unknown payload kind: {self._kind!r}")
 
     def _flush_if_dirty(self) -> None:
-        """If payload was edited and not saved, write back before SEND."""
         if self._dirty and self._kind is not None:
-            self._write_payload(self._uri)
+            self._write_payload(self._path)
             self._dirty = False
 
     # ------------------------------------------------------------------
-    # SEND — place-level transfer
+    # SEND
     # ------------------------------------------------------------------
 
     def to(self, dst: PathLike, **copy_kw: Any) -> "Flow":
-        """Copy current place (or flush dirty payload first) to ``dst``.
-
-        Returns a Flow pointing at ``dst``.
-        """
         from .ops import copy
 
         self._flush_if_dirty()
-        # If we have a clean payload and dst looks like a file write of content,
-        # still use copy of the uri for directory/file fidelity.
-        copy(self._uri, dst, **copy_kw)
-        return Flow(dst)
+        dst_path = self._resolve(dst)
+        copy(self._path, dst_path, **copy_kw)
+        return Flow(
+            dst_path.to_uri(),
+            auth=self._auth,
+            _path=dst_path,
+        )
 
     def fanout(self, *dsts: PathLike, **copy_kw: Any) -> "Flow":
-        """Copy current place to many destinations. Returns self (source Flow).
+        """Copy to many destinations.
 
-        Cognitive rule: fanout keeps your finger on the *source*; destinations
-        are side effects. Use ``same_hash(*dsts)`` to verify.
+        Each dst may be:
+        - a plain URI / path
+        - a named profile ref ``@staging_k8s:pod:/path``
+        - a pre-built ``auth.ref("staging_k8s", "pod:/path")`` URIPath
+
+        Finger stays on the **source**.
         """
         if not dsts:
             raise FlowError(".fanout() requires at least one destination")
@@ -256,102 +264,100 @@ class Flow:
 
         self._flush_if_dirty()
         for dst in dsts:
-            copy(self._uri, dst, **copy_kw)
+            copy(self._path, self._resolve(dst), **copy_kw)
         return self._clone(dirty=False)
 
     def move_to(self, dst: PathLike, **move_kw: Any) -> "Flow":
-        """Move current place to ``dst``. Returns Flow at destination."""
         from .ops import move
 
         self._flush_if_dirty()
-        move(self._uri, dst, **move_kw)
-        return Flow(dst)
+        dst_path = self._resolve(dst)
+        move(self._path, dst_path, **move_kw)
+        return Flow(
+            dst_path.to_uri(),
+            auth=self._auth,
+            _path=dst_path,
+        )
 
     def write(self, content: Union[str, bytes], encoding: str = "utf-8") -> "Flow":
-        """Write raw content to the current URI (no LOAD required)."""
         from .ops import write
 
-        write(self._uri, content, encoding=encoding)
+        write(self._path, content, encoding=encoding)
         kind = "bytes" if isinstance(content, bytes) else "text"
         return self._clone(data=content, kind=kind, dirty=False)
 
     def remove(self, **remove_kw: Any) -> "Flow":
-        """Remove the current URI. Returns self (uri unchanged; may no longer exist)."""
         from .ops import remove
 
-        remove(self._uri, **remove_kw)
+        remove(self._path, **remove_kw)
         return self._clone(data=None, kind=None, dirty=False)
 
     # ------------------------------------------------------------------
-    # INSPECT — query without shifting the mental "finger"
+    # INSPECT / CHECK
     # ------------------------------------------------------------------
 
     def exists(self) -> bool:
         from .ops import exists
-        return exists(self._uri)
+        return exists(self._path)
 
     def hash(self, algorithm: str = "sha256") -> str:  # noqa: A003
         from .hash import hash_file
-        return hash_file(self._uri, algorithm=algorithm)  # type: ignore[arg-type]
+        return hash_file(self._path, algorithm=algorithm)  # type: ignore[arg-type]
 
     def size(self) -> int:
         from .ops import file_size
-        return file_size(self._uri)
+        return file_size(self._path)
 
     def tree(self, **kw: Any) -> str:
         from .ops import tree
-        return tree(self._uri, **kw)
+        return tree(self._path, **kw)
 
     def search(self, *patterns: str, mode: str = "include", recursive: bool = True) -> List[str]:
         from .ops import search
         pats = list(patterns) if patterns else None
-        return search(self._uri, mode=mode if pats else "all", patterns=pats, recursive=recursive)
+        return search(
+            self._path, mode=mode if pats else "all", patterns=pats, recursive=recursive
+        )
 
     def listdir(self, **kw: Any) -> list:
         from .ops import listdir
-        return listdir(self._uri, **kw)
+        return listdir(self._path, **kw)
 
     def read(self, encoding: str = "utf-8", binary: bool = False) -> Union[str, bytes]:
-        """One-shot read (does not store payload). Prefer .text()/.json() for chaining."""
         from .ops import read
-        return read(self._uri, encoding=encoding, binary=binary)
+        return read(self._path, encoding=encoding, binary=binary)
 
     def ensure(self) -> "Flow":
-        """Ensure current URI exists as a directory."""
         from .ops import ensure
-        ensure(self._uri)
+        ensure(self._path)
         return self
 
-    # ------------------------------------------------------------------
-    # CHECK — direct names (no assert_ prefix)
-    # ------------------------------------------------------------------
-
     def same_hash(self, *others: PathLike, algorithm: str = "sha256") -> "Flow":
-        """Fail if any ``other`` URI differs in hash from this flow. Returns self.
-
-        Direct CHECK verb — pair with ``exists()`` (bool) for presence.
-        """
         if not others:
             raise FlowError(".same_hash() requires at least one other URI")
         base = self.hash(algorithm=algorithm)
         from .hash import hash_file
 
         for other in others:
-            h = hash_file(other, algorithm=algorithm)  # type: ignore[arg-type]
+            other_path = self._resolve(other)
+            h = hash_file(other_path, algorithm=algorithm)  # type: ignore[arg-type]
             if h != base:
                 raise FlowError(
-                    f"Hash mismatch: {self._uri} ({base[:12]}…) "
-                    f"!= {other} ({h[:12]}…)"
+                    f"Hash mismatch: {self.uri} ({base[:12]}…) "
+                    f"!= {other_path.to_uri()} ({h[:12]}…)"
                 )
         return self
 
 
-def at(uri: PathLike) -> Flow:
-    """Start a flow at ``uri`` (bare path or any supported URI scheme).
+def at(uri: PathLike, auth: Any = None) -> Flow:
+    """Start a flow at ``uri``.
 
-    This is the only entry point you need to remember.
+    Args:
+        uri: Bare path, URI, ``@name:…`` profile ref, or URIPath.
+        auth: Optional :class:`pyeff.profile.Profile` for resolving ``@name``
+            refs and attaching connection credentials.
     """
-    return Flow(uri)
+    return Flow(uri, auth=auth)
 
 
 __all__ = [

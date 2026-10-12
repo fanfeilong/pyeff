@@ -2,17 +2,24 @@
 
 This library provides simplified APIs for common operations:
 - flow: Fluent URI pipelines — at(WHERE) → LOAD → EDIT → SAVE → SEND → CHECK
+- profile: Credentials via map={api_key: source_name}; @api_key in flow
 - ops / uri: Unified path operations across local, docker, ssh, k8s, s3, archive, …
 - fs / local, archive, remote, json, yaml, lines, shell, logger, hash, git, indent
 
-Fluent flow (preferred for multi-step scripts):
-    >>> from pyeff import at
-    >>> at("./cfg.json").json().update(env="prod").save().fanout("s3://b/cfg.json")
+Fluent flow + profile (map keys are the API names):
+    >>> from pyeff import at, Profile, FileSource
+    >>> auth = Profile().load(FileSource("~/.pyeff/profiles.yaml"), map={
+    ...     "staging_k8s": "clusters.staging",
+    ...     "prod_k8s": "clusters.prod",
+    ... })
+    >>> at("./cfg.json", auth=auth).fanout(
+    ...     "@staging_k8s:pod:/etc/cfg.json",
+    ...     "@prod_k8s:pod:/etc/cfg.json",
+    ... )
 
 Unified copy() with URI Paths:
     >>> from pyeff import copy
     >>> copy("local:./src", "docker:my-container:/app")
-    >>> copy("local:./data", "archive:./backup.zip")
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from . import flow
 from . import fs
 from . import local
 from . import ops
+from . import profile
 from . import remote
 from . import uri
 from . import git
@@ -38,6 +46,20 @@ from . import shell
 from . import yaml
 
 from .flow import Flow, FlowError, at
+from .profile import (
+    Profile,
+    ProfileEntry,
+    ProfileError,
+    AuthError,
+    ProfileSource,
+    DictSource,
+    EnvSource,
+    FileSource,
+    CliSource,
+    SystemSource,
+    NacosSource,
+    load_profile,
+)
 
 # Unified operations (URI-based) - these are the primary APIs
 from .ops import (
@@ -200,6 +222,7 @@ __all__ = [
     "local",
     "logger",
     "ops",
+    "profile",
     "remote",
     "shell",
     "uri",
@@ -208,6 +231,19 @@ __all__ = [
     "at",
     "Flow",
     "FlowError",
+    # Profile (composable credentials)
+    "Profile",
+    "ProfileEntry",
+    "ProfileError",
+    "AuthError",
+    "ProfileSource",
+    "DictSource",
+    "EnvSource",
+    "FileSource",
+    "CliSource",
+    "SystemSource",
+    "NacosSource",
+    "load_profile",
     # Unified operations (URI-based)
     "copy",
     "remove",

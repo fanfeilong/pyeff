@@ -71,6 +71,31 @@ at("k8s:staging/app-pod:/etc/app").tree()
 
 Design notes (why these nodes, not more): see [`docs/flow.md`](docs/flow.md).
 
+### Profile — `map` declares API keys
+
+URI = where. **`map` keys** = who (`@name` / flow). **`map` values** = names in that source.
+
+```python
+from pyeff import at, Profile, FileSource, EnvSource
+
+auth = (
+    Profile()
+    .load(FileSource("~/.pyeff/profiles.yaml"), map={
+        "staging_k8s": "clusters.staging",
+        "prod_k8s": "clusters.prod",
+    })
+    .load(EnvSource(), map={"prod_s3": "MINIO"})
+)
+
+at("./cfg.json", auth=auth).fanout(
+    "@staging_k8s:app-pod:/etc/app/config.json",
+    "@prod_k8s:app-pod:/etc/app/config.json",
+)
+```
+
+Identity when names already match: `map=["staging_k8s", "prod_k8s"]`.
+See [`docs/profile.md`](docs/profile.md).
+
 ## Unified API with URI Paths
 
 pyeff provides **unified operations** that work across all backends using URI-style paths:

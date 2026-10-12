@@ -1063,11 +1063,25 @@ def parse_uri(uri: str) -> URIPath:
         raise ValueError(f"Unknown URI scheme: {scheme!r}")
 
 
+def resolve_path_local(path: Union[str, Path, URIPath]) -> URIPath:
+    """Resolve without profile ``@name`` handling (internal / profile module)."""
+    if isinstance(path, URIPath):
+        return path
+    if isinstance(path, Path):
+        return LocalPath(str(path))
+    s = str(path)
+    if looks_like_uri(s):
+        return parse_uri(s)
+    return LocalPath(s)
+
+
 def resolve_path(path: Union[str, Path, URIPath]) -> URIPath:
     """Resolve a path (string, Path, or URIPath) to a URIPath object.
     
     Bare local paths (without a known scheme) become ``LocalPath``.
     Windows drive letters (``c:/...``) are treated as local paths.
+    Named profile refs (``@staging_k8s:pod:/path``) use the active Profile
+    from ``pyeff.profile`` when set.
     
     Args:
         path: URI string, bare local path, ``Path``, or URIPath object.
@@ -1090,9 +1104,10 @@ def resolve_path(path: Union[str, Path, URIPath]) -> URIPath:
     if isinstance(path, Path):
         return LocalPath(str(path))
     s = str(path)
-    if looks_like_uri(s):
-        return parse_uri(s)
-    return LocalPath(s)
+    if s.startswith("@"):
+        from .profile import resolve_path as profile_resolve
+        return profile_resolve(s)
+    return resolve_path_local(s)
 
 
 def join_uri(base: Union[str, Path, URIPath], relative: str) -> str:
