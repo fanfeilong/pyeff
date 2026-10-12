@@ -58,7 +58,7 @@ from pyeff import at
         "docker:app-dev:/etc/app/config.json",
         "s3://configs/app/staging/config.json",
     )
-    .assert_same_hash(
+    .same_hash(
         "docker:app-dev:/etc/app/config.json",
         "s3://configs/app/staging/config.json",
     )

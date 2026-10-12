@@ -41,7 +41,7 @@ class TestMentalModel:
             .json()
             .update(env="prod")
             .fanout(str(d1), str(d2))
-            .assert_same_hash(str(d1), str(d2))
+            .same_hash(str(d1), str(d2))
         )
         assert load_json(d1)["env"] == "prod"
         assert load_json(d2)["env"] == "prod"
@@ -59,16 +59,15 @@ class TestMentalModel:
         assert f.uri == at(cfg).uri
         assert d1.exists()
 
-    def test_assert_same_hash_mismatch(self, cfg, tmp_path):
+    def test_same_hash_mismatch(self, cfg, tmp_path):
         other = tmp_path / "other.json"
         other.write_text('{"different": true}')
         with pytest.raises(FlowError, match="Hash mismatch"):
-            at(cfg).assert_same_hash(str(other))
+            at(cfg).same_hash(str(other))
 
-    def test_assert_exists(self, cfg, tmp_path):
-        at(cfg).assert_exists()
-        with pytest.raises(FlowError, match="does not exist"):
-            at(tmp_path / "missing.json").assert_exists()
+    def test_exists_direct_name(self, cfg, tmp_path):
+        assert at(cfg).exists() is True
+        assert at(tmp_path / "missing.json").exists() is False
 
     def test_yaml_roundtrip(self, tmp_path):
         path = tmp_path / "c.yml"

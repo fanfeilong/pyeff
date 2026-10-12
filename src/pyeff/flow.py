@@ -16,7 +16,7 @@ Five verb families — that is the whole grammar.
 | EDIT   | ``update`` ``merge`` ``map``  | Transform in-memory content      |
 | SAVE   | ``save``                      | Write content back (or to a URI) |
 | SEND   | ``to`` ``fanout`` ``move_to`` | Move/copy the *place* elsewhere  |
-| CHECK  | ``assert_exists`` ``assert_same_hash`` | Fail fast if wrong   |
+| CHECK  | ``exists`` ``same_hash``              | Confirm (bool / fail-fast) |
 
 Inspect without changing the chain position:
 ``exists``, ``hash``, ``size``, ``tree``, ``search``, ``listdir``, ``read``.
@@ -45,7 +45,7 @@ Typical release script
 ...         "docker:app:/etc/app/config.json",
 ...         "s3://configs/app/config.json",
 ...     )
-...     .assert_same_hash(
+...     .same_hash(
 ...         "docker:app:/etc/app/config.json",
 ...         "s3://configs/app/config.json",
 ...     )
@@ -248,7 +248,7 @@ class Flow:
         """Copy current place to many destinations. Returns self (source Flow).
 
         Cognitive rule: fanout keeps your finger on the *source*; destinations
-        are side effects. Use ``assert_same_hash(*dsts)`` to verify.
+        are side effects. Use ``same_hash(*dsts)`` to verify.
         """
         if not dsts:
             raise FlowError(".fanout() requires at least one destination")
@@ -323,18 +323,16 @@ class Flow:
         return self
 
     # ------------------------------------------------------------------
-    # CHECK — fail-fast guards (return self for chaining)
+    # CHECK — direct names (no assert_ prefix)
     # ------------------------------------------------------------------
 
-    def assert_exists(self) -> "Flow":
-        if not self.exists():
-            raise FlowError(f"Path does not exist: {self._uri}")
-        return self
+    def same_hash(self, *others: PathLike, algorithm: str = "sha256") -> "Flow":
+        """Fail if any ``other`` URI differs in hash from this flow. Returns self.
 
-    def assert_same_hash(self, *others: PathLike, algorithm: str = "sha256") -> "Flow":
-        """Assert that every ``other`` URI has the same hash as this flow's uri."""
+        Direct CHECK verb — pair with ``exists()`` (bool) for presence.
+        """
         if not others:
-            raise FlowError(".assert_same_hash() requires at least one other URI")
+            raise FlowError(".same_hash() requires at least one other URI")
         base = self.hash(algorithm=algorithm)
         from .hash import hash_file
 

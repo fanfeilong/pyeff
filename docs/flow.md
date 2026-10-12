@@ -34,7 +34,7 @@ at(WHERE) → [LOAD] → [EDIT] → [SAVE] → [SEND] → [CHECK]
 | EDIT   | `update` `merge` `map` | “改一下” |
 | SAVE   | `save` | “写回去 / 写到别处” |
 | SEND   | `to` `fanout` `move_to` | “送到别处（1 / N / 剪切）” |
-| CHECK  | `assert_exists` `assert_same_hash` | “确认没错” |
+| CHECK  | `exists` `same_hash` | “在不在 / 是否一致” |
 
 Inspect helpers (`exists` `hash` `size` `tree` `search` `listdir` `read`) **do not change** where the finger points.
 
@@ -70,7 +70,7 @@ Only two bits of state, both optional to think about:
 | `to(dst)` | `dst` |
 | `fanout(*dsts)` | **unchanged (source)** |
 | `move_to(dst)` | `dst` |
-| `assert_*` | unchanged |
+| `same_hash` / `exists` | unchanged |
 
 `fanout` keeps the finger on the source on purpose: “broadcast from here, then verify from here.”
 
@@ -89,13 +89,15 @@ from pyeff import at
         "ssh:deploy@test-01:/opt/app/config.json",
         "s3://configs/app/staging/config.json",
     )
-    .assert_same_hash(
+    .same_hash(
         "docker:app-dev:/etc/app/config.json",
         "ssh:deploy@test-01:/opt/app/config.json",
         "s3://configs/app/staging/config.json",
     )
 )
 ```
+
+Presence check uses the same direct name as inspection — `exists()` returns `bool` (no `assert_` wrapper).
 
 ## Relationship to `ops`
 
