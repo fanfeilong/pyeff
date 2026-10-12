@@ -1,41 +1,29 @@
 """Composable credential profiles for heterogeneous backends.
 
 =================================================================
-Mental model (two namespaces)
+Mental model
 =================================================================
 
-1. **Declared keys** — names *you* choose at assembly time.
-   These are the **only** names ``@key`` / ``auth.ref("key")`` / flow APIs use.
-2. **Source names** — whatever the file / env / Nacos / system actually calls them.
-3. **map** — optional bridge ``{declared_key: source_name}``.
-   Omit a key from map ⇒ identity (declared name == source name).
+``map`` **is** the declaration. Its keys are the only names APIs see
+(``@key`` / ``auth.ref("key")`` / flow). Values are source names
+(file / env / Nacos / system — may differ).
 
-URI = where (never embeds passwords).
-Declared key = who (API-facing).
-Source = how that who is filled.
+    map = { api_key: source_name }
 
-Example — two k8s clusters, file uses different names::
+Identity (same name in source)::
 
-    # profiles.yaml
-    # clusters:
-    #   staging: {scheme: k8s, context: staging}
-    #   prod:    {scheme: k8s, context: prod}
+    map = ["staging_k8s", "prod_k8s"]          # shorthand
+    map = {"staging_k8s": "staging_k8s", ...}  # explicit
+
+Example — two k8s, file uses other names::
 
     auth = (
         Profile()
-        .declare("staging_k8s", "prod_k8s", "prod_s3")   # API keys
-        .load(
-            FileSource("~/.pyeff/profiles.yaml"),
-            map={
-                "staging_k8s": "clusters.staging",       # declared → file path
-                "prod_k8s": "clusters.prod",
-                # prod_s3 omitted → look up source key "prod_s3"
-            },
-        )
-        .load(
-            EnvSource(),
-            map={"prod_s3": "MINIO"},                    # env uses MINIO__*
-        )
+        .load(FileSource("profiles.yaml"), map={
+            "staging_k8s": "clusters.staging",
+            "prod_k8s": "clusters.prod",
+        })
+        .load(EnvSource(), map={"prod_s3": "MINIO"})
     )
 
     at("./cfg.json", auth=auth).fanout(
@@ -54,7 +42,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Union
 from urllib.parse import urlparse
 
 from .uri import (
@@ -516,106 +504,107 @@ def _dig(tree: Mapping[str, Any], source_key: str) -> Optional[Dict[str, Any]]:
 # Profile
 # ---------------------------------------------------------------------------
 
+MapSpec = Union[Mapping[str, str], Sequence[str], str]
+
+
+def _normalize_map(map: MapSpec) -> Dict[str, str]:  # noqa: A002
+    """Normalize map spec → ``{api_key: source_key}``.
+
+    - ``{"a": "clusters.a"}`` — api key ``a`` ← source ``clusters.a``
+    - ``["a", "b"]`` — identity (api key == source key)
+    - ``"a"`` — single identity key
+    """
+    if isinstance(map, str):
+        return {map: map}
+    if isinstance(map, Mapping):
+        out: Dict[str, str] = {}
+        for k, v in map.items():
+            if not isinstance(k, str) or not k:
+                raise ProfileError(f"Invalid map key: {k!r}")
+            if not isinstance(v, str) or not v:
+                raise ProfileError(f"Invalid map value for {k!r}: {v!r}")
+            out[k] = v
+        if not out:
+            raise ProfileError("map must declare at least one API key")
+        return out
+    # sequence of api keys → identity
+    out = {}
+    for k in map:
+        if not isinstance(k, str) or not k:
+            raise ProfileError(f"Invalid map key: {k!r}")
+        out[k] = k
+    if not out:
+        raise ProfileError("map must declare at least one API key")
+    return out
+
+
 class Profile:
-    """Declared API keys + composable sources that fill them.
+    """API keys come from ``map``; sources only fill those keys.
 
-    Assembly order::
+    ::
 
-        Profile().declare(...).load(source, map=...).load(...)
-
-    Only **declared** keys are visible to ``@name`` / ``ref`` / flow.
+        Profile().load(source, map={api_key: source_name}).load(...)
     """
 
     def __init__(self) -> None:
-        # declared_key -> default fields (may include scheme)
-        self._declared: Dict[str, Dict[str, Any]] = {}
-        # declared_key -> filled ProfileEntry
+        # api keys seen across all map= calls (order preserved via dict)
+        self._keys: Dict[str, None] = {}
         self._entries: Dict[str, ProfileEntry] = {}
 
     # -- composition --------------------------------------------------------
 
-    def declare(self, *names: str, **specs: Any) -> "Profile":
-        """Declare API-facing keys (required before load / ref).
-
-        Forms::
-
-            .declare("staging_k8s", "prod_k8s")
-            .declare(staging_k8s={"scheme": "k8s"}, prod_s3={"scheme": "s3"})
-            .declare("staging_k8s", prod_k8s={"scheme": "k8s"})  # mixed
-            .declare(staging_k8s="k8s")  # shorthand: value is scheme string
-        """
-        for name in names:
-            if not isinstance(name, str) or not name:
-                raise ProfileError(f"Invalid declare name: {name!r}")
-            self._declared.setdefault(name, {})
-        for name, spec in specs.items():
-            if isinstance(spec, str):
-                defaults = {"scheme": spec}
-            elif isinstance(spec, Mapping):
-                defaults = dict(spec)
-            else:
-                raise ProfileError(
-                    f"declare({name}=...) expects scheme str or dict, got {type(spec)}"
-                )
-            existing = self._declared.get(name, {})
-            merged = dict(existing)
-            merged.update(defaults)
-            self._declared[name] = merged
-        return self
-
     def load(
         self,
         source: ProfileSource,
-        map: Optional[Mapping[str, str]] = None,  # noqa: A002 — intentional API name
+        map: MapSpec,  # noqa: A002 — map IS the declaration
         *,
         override: bool = True,
     ) -> "Profile":
-        """Fill **declared** keys from *source*.
+        """Declare/fill API keys from *source* via *map*.
 
         Args:
-            source: File / env / cli / system / nacos / dict source.
-            map: ``{declared_key: source_key}``. Source key may be dotted
-                (``clusters.staging``). Keys omitted from map use identity
-                (declared name == source name). Only declared keys are
-                considered — extra names in the source are ignored.
-            override: If True (default), source values win over prior loads.
+            source: File / env / cli / system / nacos / dict.
+            map: **Declaration + binding** in one place:
+
+                - ``{"staging_k8s": "clusters.staging"}`` — API key → source name
+                - ``["staging_k8s", "prod_k8s"]`` — identity (same names in source)
+
+                Map keys are the only names ``@key`` / ``ref`` accept.
+                Extra names in the source are ignored.
+            override: Later loads win on conflict (default True).
         """
-        if not self._declared:
-            raise ProfileError(
-                "Call .declare(...) before .load(...). "
-                "API keys must be declared at assembly time; "
-                "source names are mapped onto those keys."
-            )
+        mapping = _normalize_map(map)
+        for api_key in mapping:
+            self._keys.setdefault(api_key, None)
 
         raw = source.load()
         if not isinstance(raw, Mapping):
             raise ProfileError(f"Source {source!r} must return a mapping tree")
 
-        mapping = dict(map or {})
-        for declared_key, defaults in self._declared.items():
-            source_key = mapping.get(declared_key, declared_key)
+        for api_key, source_key in mapping.items():
             cfg = _dig(raw, source_key)
             if cfg is None:
                 continue
-            # declare defaults first, then source cfg
-            merged = dict(defaults)
-            merged.update(cfg)
-            if "scheme" not in merged:
-                raise ProfileError(
-                    f"Declared key {declared_key!r} (source {source_key!r}) "
-                    f"has no 'scheme' — set it in .declare() or in the source"
-                )
-            incoming = ProfileEntry.from_dict(declared_key, merged)
-            if declared_key not in self._entries:
-                self._entries[declared_key] = incoming
+            if "scheme" not in cfg:
+                # allow filling params onto an already-loaded entry
+                if api_key in self._entries:
+                    cfg = {"scheme": self._entries[api_key].scheme, **cfg}
+                else:
+                    raise ProfileError(
+                        f"API key {api_key!r} (source {source_key!r}) has no "
+                        f"'scheme' — put it in the source config"
+                    )
+            incoming = ProfileEntry.from_dict(api_key, cfg)
+            if api_key not in self._entries:
+                self._entries[api_key] = incoming
                 continue
             if not override:
                 continue
-            old = self._entries[declared_key]
+            old = self._entries[api_key]
             params = dict(old.params)
             params.update(incoming.params)
-            self._entries[declared_key] = ProfileEntry(
-                name=declared_key,
+            self._entries[api_key] = ProfileEntry(
+                name=api_key,
                 scheme=incoming.scheme or old.scheme,
                 params=params,
                 path=incoming.path if incoming.path is not None else old.path,
@@ -623,47 +612,37 @@ class Profile:
         return self
 
     def extend(self, **entries: Mapping[str, Any]) -> "Profile":
-        """Fill declared keys from an inline dict (tests / demos).
-
-        Keys must already be declared. Equivalent to
-        ``.load(DictSource(entries))`` with identity map.
-        """
-        unknown = set(entries) - set(self._declared)
-        if unknown:
-            raise ProfileError(
-                f"extend() keys not declared: {sorted(unknown)}. "
-                f"Declared: {self.declared_names()}"
-            )
-        return self.load(DictSource(entries))
+        """Inline fill: dict keys are API keys (identity map)."""
+        return self.load(DictSource(entries), map=list(entries.keys()))
 
     # -- query --------------------------------------------------------------
 
-    def declared_names(self) -> List[str]:
-        """API keys declared at assembly time (order stable / sorted)."""
-        return sorted(self._declared)
+    def keys(self) -> List[str]:  # noqa: A003
+        """API keys declared via ``map`` (sorted)."""
+        return sorted(self._keys)
 
     def names(self) -> List[str]:
-        """Declared keys that have been filled by at least one source."""
+        """API keys that have been filled by at least one source."""
         return sorted(self._entries)
 
     def __contains__(self, name: str) -> bool:
         return name in self._entries
 
     def get(self, name: str) -> ProfileEntry:
-        if name not in self._declared:
+        if name not in self._keys:
             raise ProfileError(
-                f"Key {name!r} was not declared. "
-                f"Declared keys: {self.declared_names()}"
+                f"Key {name!r} was not declared in any map=. "
+                f"Known API keys: {self.keys()}"
             )
         if name not in self._entries:
             raise ProfileError(
-                f"Declared key {name!r} has no data from any source yet. "
+                f"API key {name!r} has no data from any source yet. "
                 f"Filled: {self.names()}"
             )
         return self._entries[name]
 
     def as_conn_dict(self, name: Optional[str] = None) -> Dict[str, Any]:
-        """Flatten one entry (or all filled params) for nested sources (e.g. Nacos conn)."""
+        """Flatten one entry (or all filled params) for nested sources."""
         if name is not None:
             e = self.get(name)
             return {"scheme": e.scheme, **e.params}
@@ -678,10 +657,7 @@ class Profile:
     # -- resolve ------------------------------------------------------------
 
     def ref(self, name: str, path: Optional[str] = None) -> URIPath:
-        """Build a URIPath from a **declared** key + path suffix.
-
-            auth.ref("staging_k8s", "app-pod:/etc/app/config.json")
-        """
+        """Build a URIPath from an API key (from map) + path suffix."""
         entry = self.get(name)
         path_part = path if path is not None else (entry.path or "")
         if not path_part and entry.scheme not in ("local",):
@@ -695,7 +671,7 @@ class Profile:
         return _build_path(entry, path_part)
 
     def resolve(self, spec: Union[str, URIPath]) -> URIPath:
-        """Resolve ``@declared_key:…`` against this profile, or plain URI/path."""
+        """Resolve ``@api_key:…`` against this profile, or plain URI/path."""
         if isinstance(spec, URIPath):
             return _apply_entry_if_tagged(spec, self)
         s = str(spec)
@@ -707,7 +683,6 @@ class Profile:
 
     @contextmanager
     def activate(self) -> Iterator["Profile"]:
-        """Context manager: make this profile active for ``resolve_path`` / ops."""
         token = _active_profile.set(self)
         try:
             yield self
@@ -715,53 +690,36 @@ class Profile:
             _active_profile.reset(token)
 
     def __repr__(self) -> str:
-        return (
-            f"Profile(declared={self.declared_names()}, filled={self.names()})"
-        )
+        return f"Profile(keys={self.keys()}, filled={self.names()})"
 
 
-def load_profile(
-    declare: Union[List[str], Mapping[str, Any], str],
-    *source_binds: Union[ProfileSource, tuple],
-    **declare_specs: Any,
-) -> Profile:
-    """Assemble a profile: declare API keys, then bind sources.
+def load_profile(*source_binds: Union[ProfileSource, tuple]) -> Profile:
+    """Assemble a profile from ``(source, map)`` binds.
 
     Example::
 
         auth = load_profile(
-            ["staging_k8s", "prod_k8s", "prod_s3"],
             (FileSource("profiles.yaml"), {
                 "staging_k8s": "clusters.staging",
                 "prod_k8s": "clusters.prod",
             }),
             (EnvSource(), {"prod_s3": "MINIO"}),
         )
-
-        # Or with scheme defaults in declare:
-        auth = load_profile(
-            {"staging_k8s": {"scheme": "k8s"}, "prod_s3": {"scheme": "s3"}},
-            FileSource("profiles.yaml"),  # identity map
-        )
     """
     p = Profile()
-    if isinstance(declare, str):
-        p.declare(declare, **declare_specs)
-    elif isinstance(declare, Mapping):
-        p.declare(**dict(declare), **declare_specs)
-    else:
-        p.declare(*list(declare), **declare_specs)
-
     for item in source_binds:
         if isinstance(item, tuple):
             if len(item) != 2:
                 raise ProfileError(
-                    "source bind must be ProfileSource or (ProfileSource, map)"
+                    "source bind must be (ProfileSource, map)"
                 )
             src, mapping = item
             p.load(src, map=mapping)
         else:
-            p.load(item)
+            raise ProfileError(
+                "load_profile requires (source, map) pairs — "
+                "map declares API keys"
+            )
     return p
 
 

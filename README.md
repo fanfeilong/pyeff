@@ -71,22 +71,20 @@ at("k8s:staging/app-pod:/etc/app").tree()
 
 Design notes (why these nodes, not more): see [`docs/flow.md`](docs/flow.md).
 
-### Profile — declare API keys, map sources
+### Profile — `map` declares API keys
 
-URI = where. **Declared keys** = who (what `@name` / flow use).
-Source file/env/Nacos can use **different names**; `map` connects them.
+URI = where. **`map` keys** = who (`@name` / flow). **`map` values** = names in that source.
 
 ```python
 from pyeff import at, Profile, FileSource, EnvSource
 
 auth = (
     Profile()
-    .declare("staging_k8s", "prod_k8s", "prod_s3")   # API keys
     .load(FileSource("~/.pyeff/profiles.yaml"), map={
-        "staging_k8s": "clusters.staging",           # declared → file name
+        "staging_k8s": "clusters.staging",
         "prod_k8s": "clusters.prod",
     })
-    .load(EnvSource(), map={"prod_s3": "MINIO"})     # env uses MINIO__*
+    .load(EnvSource(), map={"prod_s3": "MINIO"})
 )
 
 at("./cfg.json", auth=auth).fanout(
@@ -95,6 +93,7 @@ at("./cfg.json", auth=auth).fanout(
 )
 ```
 
+Identity when names already match: `map=["staging_k8s", "prod_k8s"]`.
 See [`docs/profile.md`](docs/profile.md).
 
 ## Unified API with URI Paths

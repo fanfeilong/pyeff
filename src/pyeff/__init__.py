@@ -2,20 +2,16 @@
 
 This library provides simplified APIs for common operations:
 - flow: Fluent URI pipelines — at(WHERE) → LOAD → EDIT → SAVE → SEND → CHECK
-- profile: Composable credentials — @name refs (logical who, not scheme)
+- profile: Credentials via map={api_key: source_name}; @api_key in flow
 - ops / uri: Unified path operations across local, docker, ssh, k8s, s3, archive, …
 - fs / local, archive, remote, json, yaml, lines, shell, logger, hash, git, indent
 
-Fluent flow + profile (declare keys, then map sources):
-    >>> from pyeff import at, Profile, FileSource, EnvSource
-    >>> auth = (
-    ...     Profile()
-    ...     .declare("staging_k8s", "prod_k8s")
-    ...     .load(FileSource("~/.pyeff/profiles.yaml"), map={
-    ...         "staging_k8s": "clusters.staging",
-    ...         "prod_k8s": "clusters.prod",
-    ...     })
-    ... )
+Fluent flow + profile (map keys are the API names):
+    >>> from pyeff import at, Profile, FileSource
+    >>> auth = Profile().load(FileSource("~/.pyeff/profiles.yaml"), map={
+    ...     "staging_k8s": "clusters.staging",
+    ...     "prod_k8s": "clusters.prod",
+    ... })
     >>> at("./cfg.json", auth=auth).fanout(
     ...     "@staging_k8s:pod:/etc/cfg.json",
     ...     "@prod_k8s:pod:/etc/cfg.json",
