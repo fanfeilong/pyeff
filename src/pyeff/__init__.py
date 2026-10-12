@@ -6,10 +6,17 @@ This library provides simplified APIs for common operations:
 - ops / uri: Unified path operations across local, docker, ssh, k8s, s3, archive, …
 - fs / local, archive, remote, json, yaml, lines, shell, logger, hash, git, indent
 
-Fluent flow + profile:
-    >>> from pyeff import at, load_profile, FileSource, EnvSource
-    >>> auth = load_profile(FileSource("~/.pyeff/profiles.yaml"), EnvSource())
-    >>> at("./cfg.json", auth=auth).json().update(env="prod").save().fanout(
+Fluent flow + profile (declare keys, then map sources):
+    >>> from pyeff import at, Profile, FileSource, EnvSource
+    >>> auth = (
+    ...     Profile()
+    ...     .declare("staging_k8s", "prod_k8s")
+    ...     .load(FileSource("~/.pyeff/profiles.yaml"), map={
+    ...         "staging_k8s": "clusters.staging",
+    ...         "prod_k8s": "clusters.prod",
+    ...     })
+    ... )
+    >>> at("./cfg.json", auth=auth).fanout(
     ...     "@staging_k8s:pod:/etc/cfg.json",
     ...     "@prod_k8s:pod:/etc/cfg.json",
     ... )

@@ -1,141 +1,132 @@
-# Profile design — credentials without hardcoding
+# Profile design — declare keys, map sources
 
-## The problem you called out
+## Two namespaces (this is the whole point)
 
-If `fanout` has **two Kubernetes** targets, scheme-keyed auth cannot work:
+| Namespace | Who owns the names | Used by |
+|-----------|--------------------|---------|
+| **Declared keys** | You, at Profile assembly time | `@staging_k8s:…`, `auth.ref("staging_k8s", …)`, flow |
+| **Source names** | File / env / Nacos / system | only inside `.load(..., map=…)` |
 
-```python
-# WRONG mental model — one "k8s" key, two destinations
-profile(k8s={...})  # which cluster?
-.fanout("k8s:pod-a:/x", "k8s:pod-b:/y")
+They **may be identical** (identity map) or **different** (explicit `map`).
+
+```text
+.declare(API keys)  →  .load(source, map={api_key: source_name})  →  @api_key
 ```
 
-## Rule: logical names, not schemes
+## Why (your question about two k8s)
 
-| Concept | Meaning | Example |
-|---------|---------|---------|
-| URI | **where** | `k8s:app-pod:/etc/app/config.json` |
-| Profile entry name | **who** | `staging_k8s`, `prod_k8s` |
-| Source | **how who is loaded** | env / file / cli / system / nacos |
-
-Binding at fanout time:
-
-```python
-auth = load_profile(
-    FileSource("~/.pyeff/profiles.yaml"),
-    EnvSource(),
-)
-
-at("./cfg.json", auth=auth).fanout(
-    "@staging_k8s:app-pod:/etc/app/config.json",
-    "@prod_k8s:app-pod:/etc/app/config.json",
-)
-
-# Typed equivalent (same binding rule):
-at("./cfg.json", auth=auth).fanout(
-    auth.ref("staging_k8s", "app-pod:/etc/app/config.json"),
-    auth.ref("prod_k8s", "app-pod:/etc/app/config.json"),
-)
-```
-
-Grammar: `@<entry_name>:<scheme-specific-path>`
-
-The entry supplies `scheme` + connection params; the suffix is the path as if you wrote `k8s:…` / `s3:…` without repeating the scheme.
-
-## Composable sources (same interface)
-
-Every source implements `ProfileSource.load() -> Dict[str, dict]`.
+`fanout` never guesses “which k8s profile”. It only sees **declared** keys:
 
 ```python
 auth = (
     Profile()
-    .load(SystemSource())                      # default_k8s / default_s3 / …
-    .load(FileSource("~/.pyeff/profiles.yaml"))
-    .load(EnvSource(prefix="PYEFF_PROFILE_"))
-    .load(CliSource(sys.argv))
-    .load(NacosSource(conn=nacos_conn))        # see below
+    .declare("staging_k8s", "prod_k8s")          # ← API contract
+    .load(
+        FileSource("profiles.yaml"),
+        map={
+            "staging_k8s": "clusters.staging",   # file can call it anything
+            "prod_k8s": "clusters.prod",
+        },
+    )
+)
+
+at("./cfg.json", auth=auth).fanout(
+    "@staging_k8s:app-pod:/etc/x",
+    "@prod_k8s:app-pod:/etc/x",
 )
 ```
 
-Later sources **override** earlier keys by default (`override=True`).
-
-### File (`profiles.yaml`)
+File content (names do **not** need to match API keys):
 
 ```yaml
-staging_k8s:
-  scheme: k8s
-  context: staging
-  namespace: app
-prod_k8s:
-  scheme: k8s
-  context: prod
-  namespace: app
-prod_s3:
-  scheme: s3
-  endpoint_url: https://minio.example.com
-  # access_key / secret_key from env overlay — not committed
+clusters:
+  staging:
+    scheme: k8s
+    context: staging
+  prod:
+    scheme: k8s
+    context: prod
 ```
 
-### Environment
+## Assembly grammar
+
+```python
+auth = (
+    Profile()
+    .declare("staging_k8s", "prod_k8s", prod_s3={"scheme": "s3"})
+    .load(FileSource("~/.pyeff/profiles.yaml"), map={
+        "staging_k8s": "clusters.staging",
+        "prod_k8s": "clusters.prod",
+        # prod_s3 omitted → look up source key "prod_s3"
+    })
+    .load(EnvSource(), map={"prod_s3": "MINIO"})
+    .load(SystemSource(), map={"staging_k8s": "default_k8s"})  # optional overlay
+)
+```
+
+Rules:
+
+1. **`.declare` first** — no declare ⇒ `.load` raises.
+2. **`.load` only fills declared keys** — extra names in the source are ignored.
+3. **`map` is `{declared → source}`** — dotted paths allowed (`clusters.staging`).
+4. **Missing from map ⇒ identity** — declared name equals source name.
+5. **Secrets never in URI strings**; Nacos connection also comes from sources, not literals.
+
+## `load_profile` sugar
+
+```python
+auth = load_profile(
+    ["staging_k8s", "prod_k8s", "prod_s3"],
+    (FileSource("profiles.yaml"), {
+        "staging_k8s": "clusters.staging",
+        "prod_k8s": "clusters.prod",
+    }),
+    (EnvSource(), {"prod_s3": "MINIO"}),
+)
+```
+
+## Sources (same interface, different trees)
+
+| Source | Typical source names |
+|--------|----------------------|
+| `FileSource` | YAML/JSON/TOML keys or nested dotted paths |
+| `EnvSource` | `PYEFF_PROFILES` JSON keys, or `PREFIX + NAME + __ + PARAM` |
+| `CliSource` | `--pyeff-profile name.key=value` / `--pyeff-profile-file` |
+| `SystemSource` | `default_k8s`, `default_s3`, … (ambient login) |
+| `NacosSource` | remote JSON/YAML tree; **conn** from env/file |
+
+### Env flat keys
 
 ```bash
-# JSON blob
-export PYEFF_PROFILES='{"staging_k8s":{"scheme":"k8s","context":"staging"}}'
-
-# Or flat keys (`__` separates entry name from param)
-export PYEFF_PROFILE_STAGING_K8S__SCHEME=k8s
-export PYEFF_PROFILE_STAGING_K8S__CONTEXT=staging
-export PYEFF_PROFILE_PROD_S3__ACCESS_KEY=...
-export PYEFF_PROFILE_PROD_S3__SECRET_KEY=...
+# source name MINIO (mapped from declared prod_s3)
+export PYEFF_PROFILE_MINIO__ACCESS_KEY=...
+export PYEFF_PROFILE_MINIO__SECRET_KEY=...
 ```
 
-### CLI
-
-```bash
-python app.py \
-  --pyeff-profile-file=./profiles.yaml \
-  --pyeff-profile prod_s3.access_key="$AK" \
-  --pyeff-profile prod_s3.secret_key="$SK"
-```
-
-### System credentials
-
-`SystemSource` only registers well-known names that mean “use ambient login”:
-
-- `default_k8s` → kubeconfig
-- `default_s3` → boto3 chain
-- `default_ssh` → ssh-agent
-
-No secrets are stored in code.
-
-### Nacos (nested credentials)
-
-Nacos **connection** itself must come from env/file/cli — never literals in app code:
+### Nacos conn (also declare → map)
 
 ```python
 nacos_conn = (
     Profile()
-    .load(EnvSource(prefix="NACOS_", json_var="NACOS_CONFIG"))
-    .load(FileSource("~/.pyeff/nacos.yaml"))
-).as_conn_dict()
-# expects server_addr, data_id, optional username/password/namespace/group
+    .declare("nacos")
+    .load(EnvSource(prefix="NACOS_", json_var="NACOS_CONFIG"), map={"nacos": "nacos"})
+    # or FileSource with map
+).as_conn_dict("nacos")
 
-auth = Profile().load(NacosSource(conn=nacos_conn))
+auth = (
+    Profile()
+    .declare("staging_k8s", "prod_k8s")
+    .load(NacosSource(conn=nacos_conn), map={
+        "staging_k8s": "k8s.staging",
+        "prod_k8s": "k8s.prod",
+    })
+)
 ```
 
-`NacosSource` accepts an injectable `fetcher` for tests; production uses `nacos-sdk-python` when installed.
+## What APIs see
 
-## Activation for low-level ops
+Only declared keys:
 
-```python
-with auth.activate():
-    copy("@staging_k8s:pod:/x", "local:./x")
-```
-
-Or always pass `auth=` into `at(...)`.
-
-## What never happens
-
-- Passwords inside `s3://…` / `ssh:…` URI strings
-- Hardcoded Nacos addresses or keys in library or app source
-- Guessing which of two `k8s` entries to use by scheme alone
+- `@staging_k8s:pod:/path`
+- `auth.ref("staging_k8s", "pod:/path")`
+- Undeclared `@other:…` → `ProfileError: Key 'other' was not declared`

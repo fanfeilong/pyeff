@@ -71,30 +71,31 @@ at("k8s:staging/app-pod:/etc/app").tree()
 
 Design notes (why these nodes, not more): see [`docs/flow.md`](docs/flow.md).
 
-### Profile — credentials (who), not paths (where)
+### Profile — declare API keys, map sources
 
-URI strings never carry passwords. Bind identities by **logical name** so two
-Kubernetes clusters are unambiguous:
+URI = where. **Declared keys** = who (what `@name` / flow use).
+Source file/env/Nacos can use **different names**; `map` connects them.
 
 ```python
-from pyeff import at, load_profile, FileSource, EnvSource, SystemSource
+from pyeff import at, Profile, FileSource, EnvSource
 
-auth = load_profile(
-    SystemSource(),
-    FileSource("~/.pyeff/profiles.yaml"),
-    EnvSource(),
-    # or inline for demos — production secrets come from sources above
+auth = (
+    Profile()
+    .declare("staging_k8s", "prod_k8s", "prod_s3")   # API keys
+    .load(FileSource("~/.pyeff/profiles.yaml"), map={
+        "staging_k8s": "clusters.staging",           # declared → file name
+        "prod_k8s": "clusters.prod",
+    })
+    .load(EnvSource(), map={"prod_s3": "MINIO"})     # env uses MINIO__*
 )
 
 at("./cfg.json", auth=auth).fanout(
     "@staging_k8s:app-pod:/etc/app/config.json",
-    "@prod_k8s:app-pod:/etc/app/config.json",   # same scheme, different who
-    auth.ref("prod_s3", "bucket/config.json"),  # typed form
+    "@prod_k8s:app-pod:/etc/app/config.json",
 )
 ```
 
-Composable sources: file / env / cli / system / Nacos (Nacos conn itself from
-env/file — never hardcoded). See [`docs/profile.md`](docs/profile.md).
+See [`docs/profile.md`](docs/profile.md).
 
 ## Unified API with URI Paths
 
