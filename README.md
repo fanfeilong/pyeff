@@ -71,6 +71,31 @@ at("k8s:staging/app-pod:/etc/app").tree()
 
 Design notes (why these nodes, not more): see [`docs/flow.md`](docs/flow.md).
 
+### Profile — credentials (who), not paths (where)
+
+URI strings never carry passwords. Bind identities by **logical name** so two
+Kubernetes clusters are unambiguous:
+
+```python
+from pyeff import at, load_profile, FileSource, EnvSource, SystemSource
+
+auth = load_profile(
+    SystemSource(),
+    FileSource("~/.pyeff/profiles.yaml"),
+    EnvSource(),
+    # or inline for demos — production secrets come from sources above
+)
+
+at("./cfg.json", auth=auth).fanout(
+    "@staging_k8s:app-pod:/etc/app/config.json",
+    "@prod_k8s:app-pod:/etc/app/config.json",   # same scheme, different who
+    auth.ref("prod_s3", "bucket/config.json"),  # typed form
+)
+```
+
+Composable sources: file / env / cli / system / Nacos (Nacos conn itself from
+env/file — never hardcoded). See [`docs/profile.md`](docs/profile.md).
+
 ## Unified API with URI Paths
 
 pyeff provides **unified operations** that work across all backends using URI-style paths:

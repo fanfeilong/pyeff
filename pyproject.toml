@@ -45,6 +45,7 @@ azure = ["azure-storage-blob>=12.17.0"]
 smb = ["smbprotocol>=1.10.0"]
 cloud = ["pyeff[s3,gcs,azure]"]
 nas = ["pyeff[smb]"]
+nacos = ["nacos-sdk-python>=0.1.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
