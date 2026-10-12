@@ -38,6 +38,39 @@ For development:
 pip install pyeff[dev]
 ```
 
+## Flow — fluent pipelines (recommended for scripts)
+
+Remember one grammar:
+
+```text
+at(WHERE) → [LOAD] → [EDIT] → [SAVE] → [SEND] → [CHECK]
+```
+
+```python
+from pyeff import at
+
+(
+    at("./configs/app.json")
+    .json()
+    .update(env="staging", release="1")
+    .save()
+    .fanout(
+        "docker:app-dev:/etc/app/config.json",
+        "s3://configs/app/staging/config.json",
+    )
+    .same_hash(
+        "docker:app-dev:/etc/app/config.json",
+        "s3://configs/app/staging/config.json",
+    )
+)
+
+# copy / backup / inspect
+at("./logs").to("archive:./logs.zip")
+at("k8s:staging/app-pod:/etc/app").tree()
+```
+
+Design notes (why these nodes, not more): see [`docs/flow.md`](docs/flow.md).
+
 ## Unified API with URI Paths
 
 pyeff provides **unified operations** that work across all backends using URI-style paths:

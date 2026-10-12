@@ -1,34 +1,18 @@
 """pyeff - User-friendly Python utilities for daily coding tasks.
 
 This library provides simplified APIs for common operations:
-- fs / local: File system operations (copy, move, remove, search)
-- archive: Archive operations (compress/pack, extract/unpack)
-- remote: Remote operations (docker, ssh)
-- uri: URI-based paths for unified operations
-- json: JSON file reading and writing
-- yaml: YAML file handling with include support
-- lines: Text line manipulation and parsing
-- shell: Shell command execution
-- logger: Structured logging output
-- hash: String and file hashing
-- git: Git repository utilities
-- indent: Indentation detection and manipulation
+- flow: Fluent URI pipelines — at(WHERE) → LOAD → EDIT → SAVE → SEND → CHECK
+- ops / uri: Unified path operations across local, docker, ssh, k8s, s3, archive, …
+- fs / local, archive, remote, json, yaml, lines, shell, logger, hash, git, indent
+
+Fluent flow (preferred for multi-step scripts):
+    >>> from pyeff import at
+    >>> at("./cfg.json").json().update(env="prod").save().fanout("s3://b/cfg.json")
 
 Unified copy() with URI Paths:
     >>> from pyeff import copy
-    >>> from pyeff.uri import local, docker, ssh, archive
-    >>> 
-    >>> # URI strings
-    >>> copy("local:./src", "local:./dst")
-    >>> copy("docker:my-container:/logs", "local:./logs")
+    >>> copy("local:./src", "docker:my-container:/app")
     >>> copy("local:./data", "archive:./backup.zip")
-    >>> copy("ssh:user@host:/var/log", "local:./logs")
-    >>> 
-    >>> # Path builders (with options)
-    >>> copy(ssh("user@host", "/data", key="~/.ssh/id_rsa"), local("./backup"))
-    >>> 
-    >>> # Mixed
-    >>> copy("local:./config", docker("my-container", "/app/config"))
 """
 
 from __future__ import annotations
@@ -38,6 +22,7 @@ __author__ = "Fan Fei Long"
 __email__ = "fanfeilong@gmail.com"
 
 from . import archive
+from . import flow
 from . import fs
 from . import local
 from . import ops
@@ -51,6 +36,8 @@ from . import lines
 from . import logger
 from . import shell
 from . import yaml
+
+from .flow import Flow, FlowError, at
 
 # Unified operations (URI-based) - these are the primary APIs
 from .ops import (
@@ -203,6 +190,7 @@ __all__ = [
     "__email__",
     # Modules
     "archive",
+    "flow",
     "fs",
     "git",
     "hash",
@@ -216,6 +204,10 @@ __all__ = [
     "shell",
     "uri",
     "yaml",
+    # Flow (fluent URI pipeline)
+    "at",
+    "Flow",
+    "FlowError",
     # Unified operations (URI-based)
     "copy",
     "remove",
