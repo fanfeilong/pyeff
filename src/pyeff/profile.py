@@ -137,8 +137,8 @@ class ProfileSource(ABC):
     """Load a raw config tree. Never hardcode secrets here.
 
     The tree may be flat (``{name: {scheme, …}}``) or nested
-    (``{clusters: {staging: {…}}}``). Profile.declare + map selects
-    which nodes fill which **declared** API keys.
+    (``{clusters: {staging: {…}}}``). Profile.load(..., map=...) selects
+    which nodes fill which API keys.
     """
 
     @abstractmethod
